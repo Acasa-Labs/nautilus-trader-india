@@ -22,3 +22,6 @@ secrets/
 .DS_Store
 .idea/
 .vscode/
+
+# Local dev venv
+.venv/
