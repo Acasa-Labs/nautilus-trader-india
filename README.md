@@ -39,7 +39,7 @@ Not a fork.
 | Component | State |
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
-| `nautilus_india.dhan` — instruments + market data | **shipped**, 127 tests |
+| `nautilus_india.dhan` — instruments + market data | **shipped**, 124 tests |
 | `nautilus_india.dhan` — execution | not started |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
