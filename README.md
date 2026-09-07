@@ -5,6 +5,35 @@ NautilusTrader adapters for **Zerodha Kite** and **Dhan** — NSE, BSE and MCX.
 An independent MIT package that installs alongside upstream `nautilus-trader`.
 Not a fork.
 
+---
+
+> ## ⚠️ ALPHA — trade carefully
+>
+> This is alpha software that is intended to place real orders with real money.
+> It has never been run against a live account. Treat every number it produces
+> as unverified until you have checked it yourself.
+>
+> Specifically, and in the direction that costs you money:
+>
+> | Known gap | Effect |
+> | --- | --- |
+> | Charge rates are `verified: false` | They reproduce Dhan's *calculator* to the paisa, but no real **contract note** has been checked. Your actual charges may differ. |
+> | Exercise STT is not charged at all | A position **held to expiry is under-costed**. On a small ITM winner the real charge can exceed the entire profit. See [`docs/UPSTREAM_GAPS.md`](docs/UPSTREAM_GAPS.md). |
+> | Margin is per-instrument, not per-portfolio | A multi-leg short is **over**-charged ~1.66×. Safe for sizing, wrong for research — it can veto trades the exchange would have allowed. |
+> | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
+> | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
+>
+> Neither broker adapter is implemented yet — only `nautilus_india.core`. When
+> they land, live order submission will be gated behind two switches (see
+> below), and that gate is not a formality.
+>
+> **The API will change without deprecation before 1.0.** Pin an exact version.
+>
+> MIT means this comes with no warranty. You are responsible for every order
+> your system sends.
+
+---
+
 ## Status
 
 | Component | State |

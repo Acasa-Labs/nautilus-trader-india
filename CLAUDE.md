@@ -2,6 +2,11 @@
 
 NautilusTrader adapters for Zerodha Kite and Dhan. MIT. Not a fork.
 
+**ALPHA.** This code is intended to place real orders with real money and has
+never been run against a live account. Nothing here may be softened on the
+grounds that it is "only alpha" — alpha is precisely when the guards below
+matter, because there is no production history to catch what they miss.
+
 ## Rules
 
 These are expensive to rediscover. Do not weaken one without a measurement
