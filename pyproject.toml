@@ -40,6 +40,7 @@ packages = ["nautilus_india"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 pythonpath = ["."]
 filterwarnings = ["error::DeprecationWarning:nautilus_india.*"]
 
