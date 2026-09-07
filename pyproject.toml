@@ -18,11 +18,15 @@ classifiers = [
 dependencies = [
     "nautilus_trader>=1.231",
     "pyyaml>=6.0",
+    # The adapters own their transport rather than using a vendor SDK, so
+    # these are the package's reason for existing -- not an optional extra.
+    # `nautilus_india.core` still imports neither, which
+    # `tests/test_package.py` asserts on sys.modules.
+    "httpx>=0.27",
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]
-# Adapters only. `core` never imports these.
-adapters = ["httpx>=0.27", "websockets>=13.0", "msgspec>=0.18"]
 # Vendor SDKs are for cross-checking payload shapes while writing parsers.
 # They are never imported at runtime. See spec section 4.
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.6", "kiteconnect>=5.0", "dhanhq>=2.0"]
