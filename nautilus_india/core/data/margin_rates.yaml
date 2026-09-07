@@ -1,0 +1,27 @@
+# Fitted from Dhan's margin calculator (margincalculator/multi) on the date
+# below. Fractions of SHORT-leg NOTIONAL, not of premium.
+#
+# Fractions rather than absolutes so the table survives spot moving.
+#
+# `error_pct` is the WORST relative error the fit achieved over the grid,
+# not the average. It is exposed on the model so no downstream return on
+# capital can claim more precision than the model has.
+#
+# ONLY NAKED_SHORT SHIPS. The calibration also fitted SHORT_STRADDLE and
+# HEDGED, which need a portfolio-aware model -- and a portfolio-aware model
+# must not ship before Nautilus re-evaluates margin on position change. See
+# docs/UPSTREAM_GAPS.md. Shipping the straddle rate without that would trade
+# a safe over-charge for an unsafe under-charge.
+#
+# For the record, what the same calibration measured and this file does NOT
+# use: a short straddle at span 0.092056 / exposure 0.040064 (9
+# observations), and a hedged structure whose SPAN tracks 92-102% of MAXIMUM
+# LOSS rather than notional -- across 50-900 point wings an iron fly's SPAN
+# runs 0.21% to 3.52% of notional, a factor of 16, while its exposure margin
+# does not move at all.
+calibrated_on: '2026-09-04'
+error_pct: 0.0406
+observations: 9
+naked_short:
+  span_pct: 0.087657
+  exposure_pct: 0.020032
