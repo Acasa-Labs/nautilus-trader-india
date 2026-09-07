@@ -89,6 +89,16 @@ ruff check .
 Contributor and agent rules — including why the vendor SDKs are never imported
 at runtime — are in [`CLAUDE.md`](CLAUDE.md).
 
+## Credits
+
+Built at [Acasa Labs](https://github.com/Acasa-Labs) by Pritesh Kanani.
+
+The parts that were expensive to learn — the Dhan binary feed decoder, the
+error taxonomy behind Dhan's HTTP-200-on-failure behaviour, the charge model
+reconciled against Dhan's own calculator, and the margin calibration — come
+from measuring live behaviour rather than from reading documentation. Where a
+number could not be verified, the table says so.
+
 ## Licence
 
 MIT. NautilusTrader itself is LGPL-3.0; this package links against it and
