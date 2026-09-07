@@ -37,9 +37,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["nautilus_india"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"nautilus_india/core/data" = "nautilus_india/core/data"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

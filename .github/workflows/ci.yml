@@ -20,3 +20,42 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest -v
+
+  package:
+    # A unit test cannot catch a packaging defect: the source tree has the
+    # data files whether or not the wheel does. This job builds the wheel
+    # and asserts the YAML tables are inside it -- without them, every
+    # lookup raises on an installed copy while passing in the repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install build
+      - run: python -m build --wheel
+      - name: The data tables must ship inside the wheel
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = sorted(glob.glob("dist/*.whl"))[-1]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = [
+              "nautilus_india/core/data/lot_sizes.yaml",
+              "nautilus_india/core/data/rates.yaml",
+              "nautilus_india/core/data/margin_rates.yaml",
+          ]
+          missing = [r for r in required if r not in names]
+          if missing:
+              sys.exit(f"wheel is missing data tables: {missing}")
+          print(f"{wheel}: all {len(required)} data tables present")
+          PY
+      - name: The wheel imports and answers from its own data
+        run: |
+          pip install dist/*.whl
+          cd /tmp && python -c "
+          from datetime import date
+          from nautilus_india.core.lots import lot_size
+          assert lot_size('NIFTY', date(2026, 6, 30)) == 65
+          print('installed wheel reads its lot table')
+          "
