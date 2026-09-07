@@ -28,3 +28,14 @@ def test_core_imports_no_broker_sdk_and_no_network_client():
         if m in sys.modules
     ]
     assert leaked == [], f"nautilus_india.core pulled in {leaked}"
+
+
+def test_dhan_imports_no_vendor_sdk():
+    """The adapter owns its protocol. Importing dhanhq would reintroduce the
+    packet-drop bug this package exists to avoid -- see CLAUDE.md."""
+    import sys
+
+    sys.modules.pop("dhanhq", None)
+    import nautilus_india.dhan  # noqa: F401
+
+    assert "dhanhq" not in sys.modules
