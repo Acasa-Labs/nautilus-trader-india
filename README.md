@@ -23,9 +23,9 @@ Not a fork.
 > | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
 >
-> Neither broker adapter is implemented yet — only `nautilus_india.core`. When
-> they land, live order submission will be gated behind two switches (see
-> below), and that gate is not a formality.
+> No execution client exists yet, for either broker — this package cannot
+> place an order at all today. When one lands, live order submission will be
+> gated behind two switches (see below), and that gate is not a formality.
 >
 > **The API will change without deprecation before 1.0.** Pin an exact version.
 >
@@ -39,7 +39,8 @@ Not a fork.
 | Component | State |
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
-| `nautilus_india.dhan` — data + execution adapter | not started |
+| `nautilus_india.dhan` — instruments + market data | **shipped**, 127 tests |
+| `nautilus_india.dhan` — execution | not started |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
@@ -61,12 +62,23 @@ nifty_call = option_contract(
 # NIFTY260804002455000CE.NSE, INR, 0.05 tick, multiplier 65, expiring 15:30 IST
 ```
 
-Once the adapters land, they register the ordinary way:
+Dhan market data registers the ordinary way:
 
 ```python
+from nautilus_india.dhan import DhanDataClientConfig, DhanLiveDataClientFactory
+
 node.add_data_client_factory("DHAN", DhanLiveDataClientFactory)
-node.add_exec_client_factory("DHAN", DhanLiveExecClientFactory)
 ```
+
+See [`examples/dhan_market_data.py`](examples/dhan_market_data.py) for a
+runnable node.
+
+**Known gap:** Dhan publishes no market-feed segment code for NSE commodity,
+so its 23,870 `OPTFUT` contracts are listed but not subscribable. Dhan's own
+SDK cannot address them either — it enumerates segments 0–5, 7 and 8, leaving
+6 unassigned. Guessing would be worse than refusing: a wrong segment names a
+different instrument, and Dhan answers HTTP 200 with empty data for one that
+does not exist, so it would look like a quiet market rather than an error.
 
 ## Design notes worth knowing before you use it
 
