@@ -1,0 +1,89 @@
+# NSE equity-derivatives (options) transaction costs, dated by TRADE DATE.
+#
+# Every rate here has changed inside the 2015-2026 backtest window, so a
+# single flat rate silently misprices whole years.
+#
+# `verified: false` means the row has not yet been reconciled against a real
+# contract note. Such rows are USED, and every run records that it used them.
+#
+# Rates are fractions of turnover unless named otherwise. Turnover for
+# options is PREMIUM x units, except `stt_exercise`, which is levied on
+# INTRINSIC value x units when an ITM option is exercised at expiry.
+#
+# RECONCILED 2026-09-04 against Dhan's own brokerage calculator,
+# https://dhan.co/calculators/brokerage-calculator/, on a real NIFTY option
+# contract (08 SEP 18900 CE, lot 65). Seven cases across buy/sell prices and
+# 1-100 lots reproduce the calculator's TOTAL to the paisa with zero
+# residual, which is what pins every rate below.
+#
+# The brokerage rule was genuinely ambiguous, and it
+# resolved to the expensive side. Dhan's published pricing, quoted from that
+# page verbatim:
+#
+#   "For Equity & ETFs Intraday and MTF: Rs. 20 or 0.03% of trade value per
+#    executed order, whichever is lower."
+#   "For All Segment Options & Futures: Rs. 20 per executed order."
+#
+# The "whichever is lower" percentage branch is EQUITY INTRADAY ONLY. For
+# options it is a flat Rs 20 per executed order, with no percentage branch
+# at all. Modelling options on the equity rule under-charged brokerage by
+# ~10x on a 1-lot trade.
+#
+# STILL `verified: false`, deliberately. The calculator is Dhan's own
+# published tool and it carries its own disclaimer: "The results that you
+# see are estimates. For exact transaction related charges, please refer to
+# your contract note." Only a real contract note flips the flag. See
+# `reconciled_against` on each row for what HAS been checked.
+#
+# KNOWN LIMITATION — DATING. The calculator gives TODAY's rates. It cannot
+# say when they took effect, and STT measured at 0.15% is not the 0.10% the
+# 2024-10-01 change was believed to set. The rates below are therefore
+# applied from 2024-10-01 because that is the last boundary we can cite,
+# NOT because they are known to have held since then. A 2024-25 backtest may
+# over-charge STT. Narrowing this needs a primary circular.
+#
+# Only two periods are modelled. Exchange and SEBI rates changed more than
+# once inside 2015-2026, and additional rows are NOT invented — an uncited
+# dated row is indistinguishable from a measured one, which is the failure
+# this file exists to prevent.
+options:
+  - from: '2015-01-01'
+    to: '2024-09-30'
+    stt_sell: 0.0005          # 0.05% of sell-side premium
+    stt_exercise: 0.00125     # 0.125% of intrinsic on exercise
+    exchange: 0.00053         # NSE transaction charge on premium
+    sebi: 0.000001            # SEBI turnover fee
+    stamp_buy: 0.00003        # 0.003% on the buy side
+    gst: 0.18                 # on brokerage + exchange
+    brokerage_flat: 20.0      # flat, per executed order
+    verified: false
+    reconciled_against: none
+    source: >-
+      Statutory rates per Finance Act and SEBI schedules. NOT reconciled
+      against anything: Dhan's calculator quotes today's rates only, and Dhan
+      did not exist for most of this period, so its brokerage here is a
+      counterfactual. Treat every number in this row as an estimate.
+  - from: '2024-10-01'
+    to: '2030-12-31'
+    # Every rate below reproduces Dhan's calculator to the paisa over seven
+    # cases. The start date is the last boundary that can be cited, not a
+    # date these rates are known to have held from.
+    stt_sell: 0.0015          # 0.15% of sell-side premium, measured
+    stt_exercise: 0.00125     # NOT measured; the calculator has no exercise case
+    exchange: 0.0003553       # 0.03553% of turnover, measured
+    sebi: 0.000001            # 0.0001% of turnover, measured
+    stamp_buy: 0.00003        # 0.003% of buy-side premium, measured
+    gst: 0.18                 # on brokerage + exchange ONLY, measured
+    brokerage_flat: 20.0      # flat per executed order; no percentage branch
+    verified: false
+    reconciled_against: >-
+      https://dhan.co/calculators/brokerage-calculator/ on 2026-09-04, NIFTY
+      08 SEP 18900 CE (lot 65). Seven cases from 1 to 100 lots and buy/sell
+      premiums 50-1000 reproduce the calculator's total exactly.
+    source: >-
+      Dhan's published brokerage calculator. The exchange rate of 0.03553%
+      is the figure the calculator charges; NSE's own schedule decomposes it
+      as 0.03503% transaction charge plus 0.0005% IPFT, which sums exactly —
+      that split is INFERRED from the published schedule, not measured, and
+      the calculator's separate IPFT line shows 0.00 because it is folded in.
+      stt_exercise is carried over unverified.
