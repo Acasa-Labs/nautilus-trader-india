@@ -64,7 +64,17 @@ def _window(key: ContractKey) -> tuple[int, int]:
     return dt_to_unix_nanos(activation), dt_to_unix_nanos(expiration)
 
 
-def _lot_info(key: ContractKey) -> tuple[int, dict]:
+def _lot_info(key: ContractKey, override: int | None = None) -> tuple[int, dict]:
+    """The lot and where it came from.
+
+    `override` is for a caller holding a better source than our table -- a
+    broker's live instrument master, which lists the lot the exchange is
+    using TODAY. Our table is the historical record and covers only the
+    underlyings whose bhavcopy has been harvested, so without this an
+    adapter could mint contracts for NIFTY and nothing else.
+    """
+    if override is not None:
+        return override, {"lot_size": override, "lot_size_source": "supplied by the caller"}
     lots = lot_size(key.underlying, key.expiry)
     return lots, {
         "lot_size": lots,
@@ -78,11 +88,12 @@ def option_contract(
     *,
     ts_init: int = 0,
     margin_init: Decimal = Decimal("0"),
+    lot_size: int | None = None,
 ) -> OptionContract:
     """One listed option series."""
     if key.instrument_class is not InstrumentClass.OPTION:
         raise ValueError(f"expected an OPTION, got {key.instrument_class.value}")
-    lots, info = _lot_info(key)
+    lots, info = _lot_info(key, lot_size)
     activation_ns, expiration_ns = _window(key)
     return OptionContract(
         instrument_id=to_instrument_id(key, exchange),
@@ -116,11 +127,12 @@ def futures_contract(
     *,
     ts_init: int = 0,
     margin_init: Decimal = Decimal("0"),
+    lot_size: int | None = None,
 ) -> FuturesContract:
     """One listed futures series."""
     if key.instrument_class is not InstrumentClass.FUTURE:
         raise ValueError(f"expected a FUTURE, got {key.instrument_class.value}")
-    lots, info = _lot_info(key)
+    lots, info = _lot_info(key, lot_size)
     activation_ns, expiration_ns = _window(key)
     return FuturesContract(
         instrument_id=to_instrument_id(key, exchange),

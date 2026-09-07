@@ -1,6 +1,7 @@
 from datetime import date, datetime, time
 from decimal import Decimal
 
+import pytest
 from nautilus_trader.core.datetime import dt_to_unix_nanos
 from nautilus_trader.model.currencies import INR
 from nautilus_trader.model.enums import OptionKind
@@ -123,3 +124,34 @@ def test_the_squaring_trap_shown_in_rupees():
     assert correct.as_decimal() == Decimal("6500.00")
     assert squared.as_decimal() == Decimal("422500.00")
     assert squared.as_decimal() == correct.as_decimal() * 65
+
+
+def test_a_caller_may_supply_a_lot_size_our_table_does_not_have():
+    """Our table is the historical record and covers only the underlyings
+    whose bhavcopy has been harvested. A broker's live instrument master
+    lists the lot the exchange is using TODAY, for every contract.
+
+    Without this an adapter could mint NIFTY contracts and nothing else --
+    which is exactly what happened, silently, until a provider test caught
+    it: every option and future was dropped because `lot_size` raised.
+    """
+    from nautilus_india.core.lots import UnknownLotSizeError
+
+    key = ContractKey("RELIANCE", InstrumentClass.OPTION, date(2026, 9, 24), Decimal("1400"), "CE")
+    with pytest.raises(UnknownLotSizeError):
+        option_contract(key, Exchange.NSE)
+
+    supplied = option_contract(key, Exchange.NSE, lot_size=500)
+    assert supplied.multiplier == Quantity.from_int(500)
+    assert supplied.info["lot_size"] == 500
+    assert supplied.info["lot_size_source"] == "supplied by the caller"
+
+
+def test_the_supplied_lot_size_says_it_was_supplied():
+    """Provenance survives the override, so a run that used a broker's
+    number rather than the archive's can say so."""
+    contract = option_contract(NIFTY_CALL, Exchange.NSE, lot_size=65)
+    assert contract.info["lot_size_source"] == "supplied by the caller"
+    assert option_contract(NIFTY_CALL, Exchange.NSE).info["lot_size_source"] != (
+        "supplied by the caller"
+    )
