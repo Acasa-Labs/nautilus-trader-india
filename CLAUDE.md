@@ -93,8 +93,8 @@ units. `lot_size` is 1: one contract is one lot.
 
 ## Never commit
 
-Credentials, tokens, account numbers, real order records, or anything from a
-private repository beyond the modules named in the spec's provenance table.
+Credentials, tokens, account numbers, real order records, or anything copied
+from a private repository.
 
 ## References
 
@@ -102,5 +102,4 @@ private repository beyond the modules named in the spec's provenance table.
 - Kite Connect v3 — https://kite.trade/docs/connect/v3/
 - NautilusTrader Python adapter base classes —
   `nautilus_trader/adapters/_template/`, `live/factories.py`, `live/node.py`
-- The design spec — `docs/superpowers/specs/2026-09-07-nautilus-trader-india-design.md`
 - Known core gaps — `docs/UPSTREAM_GAPS.md`

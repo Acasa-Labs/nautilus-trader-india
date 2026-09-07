@@ -25,3 +25,9 @@ secrets/
 
 # Local dev venv
 .venv/
+
+# Planning and design artifacts. Kept locally, deliberately not published:
+# they are process, not product, and a spec that drifts from the code is
+# worse than no spec. What a reader needs is in README.md, CLAUDE.md and
+# docs/UPSTREAM_GAPS.md.
+docs/superpowers/
