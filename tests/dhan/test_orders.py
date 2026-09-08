@@ -183,3 +183,195 @@ def test_nothing_in_the_payload_is_a_float(nifty_option):
     """A float anywhere is a value that has already been through a C double."""
     for key, value in _payload(nifty_option).items():
         assert not isinstance(value, float), key
+
+
+# -- reading Dhan's answers back ---------------------------------------------
+#
+# Every row below is a `documented-never-observed` fixture: this account has
+# never traded, so no order, trade or position row has ever arrived here.
+# The field names are Dhan's; the numbers are overridden per test to say what
+# each one is about.
+
+from datetime import UTC, datetime  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+from nautilus_trader.model.enums import OrderStatus, PositionSide  # noqa: E402
+from nautilus_trader.model.identifiers import AccountId  # noqa: E402
+
+from tests.dhan import corpus  # noqa: E402
+
+ACCOUNT = AccountId("DHAN-CLIENT1")
+
+
+def _order_row(**overrides):
+    return dict(corpus.body("order_book_row")) | overrides
+
+
+def test_a_dhan_timestamp_is_read_as_india_not_utc():
+    """Dhan stamps with no zone, in IST. Read as UTC it lands five and a half
+    hours early -- most of a session -- so a fill drops onto the wrong trading
+    day and reconciliation compares two different days."""
+    ns = orders.ist_to_ns("2021-11-24 13:33:03")
+    assert datetime.fromtimestamp(ns / 1e9, UTC).isoformat() == "2021-11-24T08:03:03+00:00"
+
+
+@pytest.mark.parametrize("stamp", ["", None])
+def test_an_empty_timestamp_is_zero_not_an_error(stamp):
+    """Dhan sends "" and null on a row that never reached the exchange."""
+    assert orders.ist_to_ns(stamp) == 0
+
+
+def test_every_documented_order_status_maps():
+    """Dhan publishes seven."""
+    assert set(orders.ORDER_STATUS) == {
+        "TRANSIT", "PENDING", "REJECTED", "CANCELLED", "PART_TRADED",
+        "TRADED", "EXPIRED",
+    }
+    assert orders.ORDER_STATUS["TRADED"] is OrderStatus.FILLED
+    assert orders.ORDER_STATUS["PART_TRADED"] is OrderStatus.PARTIALLY_FILLED
+    assert orders.ORDER_STATUS["TRANSIT"] is OrderStatus.SUBMITTED
+    assert orders.ORDER_STATUS["PENDING"] is OrderStatus.ACCEPTED
+
+
+def test_an_unknown_status_raises_rather_than_defaulting(nifty_option):
+    """A status read as accepted when it means rejected leaves the engine
+    waiting for a fill that is never coming."""
+    with pytest.raises(ValueError, match="SOMETHING_NEW"):
+        orders.order_status_report(
+            _order_row(orderStatus="SOMETHING_NEW", quantity=65),
+            nifty_option, ACCOUNT, UUID4(), 0,
+        )
+
+
+def test_an_order_report_counts_in_lots_not_units(nifty_option):
+    """Dhan's `quantity` is units. Reporting it as the Nautilus quantity
+    multiplies the position by the lot size."""
+    report = orders.order_status_report(
+        _order_row(quantity=130, filledQty=65, price=100.25, orderStatus="PART_TRADED"),
+        nifty_option, ACCOUNT, UUID4(), 7,
+    )
+    assert report.quantity == Quantity.from_int(2)
+    assert report.filled_qty == Quantity.from_int(1)
+    assert report.price == Price.from_str("100.25")
+    assert report.order_status is OrderStatus.PARTIALLY_FILLED
+
+
+def test_a_quantity_that_is_not_whole_lots_raises(nifty_option):
+    """Dhan and this package's snapshot of Dhan's own master disagree about
+    the lot. A rounded answer is a position report that is quietly wrong, and
+    the engine would trade the difference."""
+    with pytest.raises(ValueError, match="65"):
+        orders.order_status_report(
+            _order_row(quantity=100), nifty_option, ACCOUNT, UUID4(), 0
+        )
+
+
+def test_the_client_order_id_comes_back_from_correlation_id(nifty_option):
+    report = orders.order_status_report(
+        _order_row(correlationId="O-1", quantity=65), nifty_option, ACCOUNT, UUID4(), 0
+    )
+    assert report.client_order_id == ClientOrderId("O-1")
+
+
+def test_a_row_with_no_correlation_id_still_reports(nifty_option):
+    """An order placed from Dhan's own app carries none. Dropping the row
+    would hide a position the account really holds -- the exact case
+    reconciliation exists to catch."""
+    report = orders.order_status_report(
+        _order_row(correlationId="", quantity=65), nifty_option, ACCOUNT, UUID4(), 0
+    )
+    assert report.client_order_id is None
+
+
+def test_a_zero_price_is_reported_as_absent(nifty_option):
+    """Dhan sends `price` on a MARKET order and `averageTradedPrice` on an
+    unfilled one regardless, both 0.0. Rendered literally that is a limit of
+    zero and a fill at zero, neither of which any order had."""
+    report = orders.order_status_report(
+        _order_row(quantity=65, price=0.0), nifty_option, ACCOUNT, UUID4(), 0
+    )
+    assert report.price is None
+    assert report.avg_px is None
+
+
+def test_a_rejected_row_carries_dhan_s_own_reason(nifty_option):
+    """The first thing looked at on a REJECTED row, and the only place Dhan
+    says why."""
+    report = orders.order_status_report(
+        _order_row(orderStatus="REJECTED", quantity=65,
+                   omsErrorDescription="RMS:Margin Exceeds"),
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.cancel_reason == "RMS:Margin Exceeds"
+
+
+def test_a_fill_report_uses_the_exchange_trade_id(nifty_option):
+    """`exchangeTradeId` is the only per-fill identity Dhan gives. Keying on
+    orderId instead collapses a partially filled order's fills into one and
+    loses every fill after the first."""
+    report = orders.fill_report(
+        dict(corpus.body("trade_book_row")) | {"tradedQuantity": 65, "tradedPrice": 100.25},
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.trade_id.value == "15112111182045"
+    assert report.last_qty == Quantity.from_int(1)
+    assert report.last_px == Price.from_str("100.25")
+
+
+def test_a_fill_report_does_not_invent_a_commission(nifty_option):
+    """GET /v2/trades carries no charge figure and the margin calculator
+    returns `brokerage: 0.0`, so Dhan does not tell us. This package CAN
+    model the charge, and putting that estimate here would launder our own
+    number into a broker record."""
+    report = orders.fill_report(
+        dict(corpus.body("trade_book_row")) | {"tradedQuantity": 65},
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.commission.currency.code == "INR"
+    assert report.commission.as_decimal() == Decimal(0)
+
+
+def test_a_short_position_reports_short_and_positive(nifty_option):
+    """`netQty` is signed and Nautilus takes a side plus a magnitude. A
+    negative Quantity is rejected outright, so the sign has to move."""
+    report = orders.position_status_report(
+        dict(corpus.body("position_row")) | {
+            "netQty": -130, "positionType": "SHORT", "sellAvg": 100.25, "buyAvg": 0.0
+        },
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.position_side is PositionSide.SHORT
+    assert report.quantity == Quantity.from_int(2)
+    assert report.avg_px_open == Decimal("100.25")
+
+
+def test_a_closed_position_reports_flat(nifty_option):
+    """Dhan keeps a squared-off contract in the book at netQty 0 for the rest
+    of the session. Reported as anything but flat, the engine would close a
+    position that is already gone."""
+    report = orders.position_status_report(
+        dict(corpus.body("position_row")) | {"netQty": 0, "positionType": "CLOSED"},
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.position_side is PositionSide.FLAT
+    assert report.quantity == Quantity.from_int(0)
+
+
+def test_a_long_position_reports_the_surviving_side_s_average(nifty_option):
+    """A short was entered by SELLING, so reporting its buyAvg shows the price
+    it is being closed at as the price it was opened at."""
+    report = orders.position_status_report(
+        dict(corpus.body("position_row")) | {
+            "netQty": 65, "positionType": "LONG", "buyAvg": 12.5, "sellAvg": 99.0
+        },
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.avg_px_open == Decimal("12.5")
+
+
+def test_an_unknown_position_type_raises(nifty_option):
+    with pytest.raises(ValueError, match="positionType"):
+        orders.position_status_report(
+            dict(corpus.body("position_row")) | {"positionType": "SIDEWAYS"},
+            nifty_option, ACCOUNT, UUID4(), 0,
+        )
