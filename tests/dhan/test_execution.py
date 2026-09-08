@@ -12,6 +12,7 @@ position that follows is one nobody chose.
 """
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -882,3 +883,203 @@ def test_every_endpoint_on_dhan_s_order_page_is_reachable():
     for verb in ("self._http.post(", "self._http.put(", "self._http.delete(",
                  "self._http.get("):
         assert verb in source, verb
+
+
+# -- super orders and forever orders -----------------------------------------
+
+from nautilus_trader.execution.messages import SubmitOrderList  # noqa: E402
+from nautilus_trader.model.enums import ContingencyType, TriggerType  # noqa: E402
+from nautilus_trader.model.identifiers import OrderListId  # noqa: E402
+from nautilus_trader.model.orders import StopLimitOrder, StopMarketOrder  # noqa: E402
+from nautilus_trader.model.orders.list import OrderList  # noqa: E402
+
+
+def _bracket(instrument):
+    """An entry with a target and a stop -- which is what a super order is."""
+    entry = LimitOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-E"),
+        order_side=OrderSide.BUY, quantity=Quantity.from_int(1),
+        price=Price.from_str("1500.00"), init_id=UUID4(), ts_init=0,
+        time_in_force=TimeInForce.DAY, order_list_id=OrderListId("OL-1"),
+        contingency_type=ContingencyType.OTO,
+        linked_order_ids=[ClientOrderId("O-T"), ClientOrderId("O-S")],
+    )
+    target = LimitOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-T"),
+        order_side=OrderSide.SELL, quantity=Quantity.from_int(1),
+        price=Price.from_str("1600.00"), init_id=UUID4(), ts_init=0,
+        time_in_force=TimeInForce.GTC, order_list_id=OrderListId("OL-1"),
+        parent_order_id=ClientOrderId("O-E"), contingency_type=ContingencyType.OUO,
+        linked_order_ids=[ClientOrderId("O-S")],
+    )
+    stop = StopMarketOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-S"),
+        order_side=OrderSide.SELL, quantity=Quantity.from_int(1),
+        trigger_price=Price.from_str("1400.00"), trigger_type=TriggerType.DEFAULT,
+        init_id=UUID4(), ts_init=0, time_in_force=TimeInForce.GTC,
+        order_list_id=OrderListId("OL-1"), parent_order_id=ClientOrderId("O-E"),
+        contingency_type=ContingencyType.OUO,
+        linked_order_ids=[ClientOrderId("O-T")],
+    )
+    return OrderList(OrderListId("OL-1"), [entry, target, stop])
+
+
+def _submit_list(instrument):
+    order_list = _bracket(instrument)
+    return SubmitOrderList(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        order_list=order_list, command_id=UUID4(), ts_init=0,
+    )
+
+
+async def test_a_bracket_goes_out_as_one_super_order(
+    nifty_option, live_env, recorded
+):
+    """Three separate orders have no OCO between them: a filled target leaves
+    the stop working, and the next move opens a position nobody chose. A super
+    order is the venue holding that relationship."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=corpus.body("conditional_order_accepted"))
+
+    client = await _client(handler, nifty_option)
+    await client._submit_order_list(_submit_list(nifty_option))
+    assert seen["path"] == "/v2/super/orders"
+    assert seen["body"]["targetPrice"] == "1600.00"
+    assert seen["body"]["stopLossPrice"] == "1400.00"
+
+
+async def test_every_leg_of_a_bracket_is_reported_accepted(
+    nifty_option, live_env, recorded
+):
+    """One acknowledgement covers three orders, and Nautilus is tracking all
+    three. Accepting only the entry leaves two orders the engine believes are
+    still in flight."""
+    client = await _client(
+        lambda r: httpx.Response(200, json=corpus.body("conditional_order_accepted")),
+        nifty_option,
+    )
+
+    async def handler(request):
+        return httpx.Response(200, json=corpus.body("conditional_order_accepted"))
+
+    client._http = DhanHttpClient(
+        "CLIENT1", "tok",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    await client._submit_order_list(_submit_list(nifty_option))
+    assert _names(recorded) == [
+        "generate_order_submitted", "generate_order_submitted",
+        "generate_order_submitted", "generate_order_accepted",
+        "generate_order_accepted", "generate_order_accepted",
+    ]
+
+
+async def test_a_bracket_that_times_out_emits_nothing_for_any_leg(
+    nifty_option, live_env, recorded
+):
+    """The evidence rule, three orders at once. All three may be working."""
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = await _client(handler, nifty_option)
+    await client._submit_order_list(_submit_list(nifty_option))
+    assert _names(recorded) == ["generate_order_submitted"] * 3
+
+
+async def test_a_list_that_is_not_a_bracket_is_denied(nifty_option, live_env, recorded):
+    """Dhan has no other multi-order primitive on this path. Sending the legs
+    one at a time would silently drop the OCO the caller asked for."""
+    sent = []
+    order_list = OrderList(OrderListId("OL-2"), [_order(nifty_option, "O-A")])
+    client = await _client(_acknowledging(sent), nifty_option)
+    await client._submit_order_list(SubmitOrderList(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        order_list=order_list, command_id=UUID4(), ts_init=0,
+    ))
+    assert sent == []
+    assert _names(recorded) == ["generate_order_denied"]
+
+
+async def test_the_super_order_book_reports_every_leg(nifty_option, live_env):
+    async def handler(request):
+        rows = [dict(row) | {"securityId": "43492", "exchangeSegment": "NSE_FNO",
+                             "quantity": 65, "remainingQuantity": 65, "price": 1500.0}
+                for row in corpus.body("super_order_row")]
+        return httpx.Response(200, json=rows)
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_super_order_reports()
+    assert len(reports) == 3
+
+
+async def test_a_forever_order_rests_on_its_own_endpoint(
+    nifty_option, live_env, recorded
+):
+    """/v2/orders takes DAY and IOC and nothing else, so an order meant to
+    outlive the session has to go somewhere else entirely."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=corpus.body("conditional_order_accepted"))
+
+    client = await _client(handler, nifty_option)
+    order = StopLimitOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=nifty_option.id, client_order_id=ClientOrderId("O-F"),
+        order_side=OrderSide.BUY, quantity=Quantity.from_int(1),
+        price=Price.from_str("1428.00"), trigger_price=Price.from_str("1427.00"),
+        trigger_type=TriggerType.DEFAULT, init_id=UUID4(), ts_init=0,
+        time_in_force=TimeInForce.GTC,
+    )
+    await client.submit_forever_order(_submit(order), product_type="CNC")
+    assert seen["path"] == "/v2/forever/orders"
+    assert seen["body"]["orderFlag"] == "SINGLE"
+    assert seen["body"]["triggerPrice"] == "1427.00"
+    assert _names(recorded) == ["generate_order_submitted", "generate_order_accepted"]
+
+
+async def test_the_forever_book_reports_what_is_resting(nifty_option, live_env):
+    async def handler(request):
+        rows = [dict(row) | {"securityId": "43492", "exchangeSegment": "NSE_FNO",
+                             "quantity": 65} for row in corpus.body("forever_order_row")]
+        return httpx.Response(200, json=rows)
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_forever_order_reports()
+    assert len(reports) == 1
+    assert reports[0].time_in_force.name == "GTC"
+
+
+async def test_an_empty_forever_book_is_no_reports(nifty_option, live_env):
+    """This account's real answer, captured today."""
+    async def handler(request):
+        return httpx.Response(200, json=corpus.body("forever_orders"))
+
+    client = await _client(handler, nifty_option)
+    assert await client.generate_forever_order_reports() == []
+
+
+async def test_cancelling_a_super_order_leg_warns_that_it_is_final(
+    nifty_option, live_env, recorded, caplog
+):
+    """Dhan will not let the leg be added back, and nothing in the API says
+    so at the point of no return."""
+    seen = {}
+
+    async def handler(request):
+        seen["method"], seen["path"] = request.method, request.url.path
+        return httpx.Response(202, json=corpus.body("order_cancelled"))
+
+    client = await _client(handler, nifty_option)
+    await client.cancel_super_order_leg("112111182045", "TARGET_LEG")
+    assert seen == {"method": "DELETE",
+                    "path": "/v2/super/orders/112111182045/TARGET_LEG"}

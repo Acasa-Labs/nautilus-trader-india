@@ -47,6 +47,7 @@ from nautilus_trader.execution.messages import (
     GeneratePositionStatusReports,
     ModifyOrder,
     SubmitOrder,
+    SubmitOrderList,
 )
 from nautilus_trader.execution.reports import (
     ExecutionMassStatus,
@@ -70,16 +71,24 @@ from nautilus_trader.model.identifiers import (
     InstrumentId,
     VenueOrderId,
 )
+from nautilus_trader.model.orders import Order
 
+from nautilus_india.dhan import forever_orders, super_orders
 from nautilus_india.dhan.auth import from_env
 from nautilus_india.dhan.config import DhanExecClientConfig, submission_refusal
 from nautilus_india.dhan.constants import (
+    FOREVER_ORDERS_PATH,
+    LEG_ENTRY,
+    LEG_STOP_LOSS,
+    LEG_TARGET,
     ORDER_SLICING_PATH,
     ORDER_TYPE_LIMIT,
     ORDERS_EXTERNAL_PATH,
     ORDERS_PATH,
     POSITIONS_PATH,
+    PRODUCT_CNC,
     SEGMENT_CODES,
+    SUPER_ORDERS_PATH,
     TRADES_PATH,
 )
 from nautilus_india.dhan.errors import Ambiguous, DhanError, IPNotWhitelisted
@@ -561,3 +570,270 @@ class DhanExecutionClient(LiveExecutionClient):
             self._reports_from(await self._http.get(POSITIONS_PATH), position_status_report)
         )
         return status
+
+    # -- super orders and forever orders ---------------------------------
+    #
+    # Two endpoints that hold a relationship the ordinary order path cannot.
+    # A super order keeps entry, target and stop together, so a filled target
+    # cancels the stop instead of leaving it working. A forever order rests
+    # past the close, which /v2/orders cannot do at all -- it takes DAY and
+    # IOC and nothing else.
+
+    async def _submit_order_list(self, command: SubmitOrderList) -> None:
+        """A bracket, sent as ONE super order.
+
+        Sending the three legs separately would drop the very thing the caller
+        asked for: there is no OCO between independent orders, so a filled
+        target leaves the stop working and the next move opens a position
+        nobody chose.
+        """
+        orders_in_list = list(command.order_list.orders)
+        entry = orders_in_list[0]
+        instrument = self._cache.instrument(entry.instrument_id)
+
+        refusal = self._super_order_refusal(command, entry, instrument)
+        if refusal is not None:
+            for order in orders_in_list:
+                self.generate_order_denied(
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    reason=refusal,
+                    ts_event=self._clock.timestamp_ns(),
+                )
+            return
+
+        target, stop_loss = orders_in_list[1], orders_in_list[2]
+        payload = super_orders.place_payload(
+            entry=entry, target=target, stop_loss=stop_loss, instrument=instrument,
+            security_id=self._provider.security_id_for(entry.instrument_id),
+            client_id=self._dhan_client_id,
+            product_type=self._config.product_type,
+        )
+
+        for order in orders_in_list:
+            self.generate_order_submitted(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                ts_event=self._clock.timestamp_ns(),
+            )
+
+        try:
+            body = await self._http.post(SUPER_ORDERS_PATH, payload)
+        except Ambiguous as exc:
+            self._log.error(
+                f"super order {entry.client_order_id} did not complete and may have "
+                f"reached Dhan ({exc}). NO EVENT EMITTED for any of its three legs "
+                "-- all of them may be working. Resolve by reconciliation."
+            )
+            return
+        except DhanError as exc:
+            if isinstance(exc, IPNotWhitelisted):
+                self.is_degraded_by_ip = True
+            for order in orders_in_list:
+                self.generate_order_rejected(
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    reason=str(exc),
+                    ts_event=self._clock.timestamp_ns(),
+                )
+            return
+
+        # ONE acknowledgement covers three orders, and Nautilus is tracking
+        # all three. Accepting only the entry leaves two the engine believes
+        # are still in flight.
+        order_id = str(body["orderId"])
+        # strict: a bracket is exactly three orders, and a fourth silently
+        # dropped would be an order Nautilus tracks and Dhan never heard of.
+        legs = (LEG_ENTRY, LEG_TARGET, LEG_STOP_LOSS)
+        for order, leg in zip(orders_in_list, legs, strict=True):
+            self.generate_order_accepted(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                venue_order_id=super_orders.leg_venue_order_id(order_id, leg),
+                ts_event=self._clock.timestamp_ns(),
+            )
+
+    def _super_order_refusal(self, command, entry, instrument) -> str | None:
+        gate = submission_refusal(self._config, os.environ)
+        if gate is not None:
+            return gate
+        if self.is_degraded_by_ip:
+            return (
+                "this client is degraded: Dhan refused an earlier order with "
+                "'Invalid IP', and every order from this address fails the same way."
+            )
+        if not command.order_list.is_bracket:
+            return (
+                "Dhan's only multi-order primitive on this path is the super order, "
+                "which is an entry with a target and a stop. This list is not that "
+                "shape. Sending its orders one at a time would silently drop the "
+                "contingency the caller asked for."
+            )
+        if instrument is None:
+            return f"{entry.instrument_id} is not in the cache"
+        try:
+            self._provider.security_id_for(entry.instrument_id)
+            legs = list(command.order_list.orders)
+            super_orders.place_payload(
+                entry=legs[0], target=legs[1], stop_loss=legs[2], instrument=instrument,
+                security_id="0", client_id=self._dhan_client_id,
+                product_type=self._config.product_type,
+            )
+        except (LookupError, Unsendable) as exc:
+            return str(exc)
+        return None
+
+    async def cancel_super_order_leg(self, order_id: str, leg_name: str) -> None:
+        """Cancel one leg, or ENTRY_LEG to cancel the whole structure.
+
+        Cancelling a target or stop leg on its own CANNOT BE UNDONE -- Dhan
+        will not let the same leg be added again, and nothing in the API says
+        so at the point of no return. So this does.
+        """
+        if leg_name != LEG_ENTRY:
+            self._log.warning(
+                f"{order_id}/{leg_name}: {super_orders.LEG_CANCEL_IS_IRREVERSIBLE}"
+            )
+        try:
+            await self._http.delete(super_orders.cancel_path(order_id, leg_name))
+        except Ambiguous as exc:
+            self._log.error(
+                f"cancel of super order leg {order_id}/{leg_name} did not complete "
+                f"and may have reached Dhan ({exc}). The leg may still be working."
+            )
+
+    async def modify_super_order_leg(self, order_id: str, leg_name: str, **terms) -> None:
+        """Change one leg's terms.
+
+        ENTRY_LEG moves the whole super order, but only while the entry is
+        PENDING or PART_TRADED. Once it is TRADED, only the target and stop
+        legs move, and only their price and trailing jump.
+        """
+        payload = super_orders.modify_payload(
+            order_id=order_id, client_id=self._dhan_client_id, leg_name=leg_name, **terms
+        )
+        try:
+            await self._http.put(f"{SUPER_ORDERS_PATH}/{order_id}", payload)
+        except Ambiguous as exc:
+            self._log.error(
+                f"modify of super order leg {order_id}/{leg_name} did not complete "
+                f"and may have reached Dhan ({exc}). Its terms are unknown."
+            )
+
+    async def generate_super_order_reports(self) -> list[OrderStatusReport]:
+        """The super order book, one report per LEG.
+
+        A single report per super order would hide the target and the stop,
+        which are the orders actually resting at the venue.
+        """
+        return super_orders.reports_from(
+            await self._http.get(SUPER_ORDERS_PATH),
+            self._instrument_for,
+            self.account_id,
+            self._clock.timestamp_ns(),
+        )
+
+    async def submit_forever_order(
+        self,
+        command: SubmitOrder,
+        *,
+        product_type: str = PRODUCT_CNC,
+        second_leg: Order | None = None,
+    ) -> None:
+        """Rest an order past the close, which /v2/orders cannot do.
+
+        Not reachable from `_submit_order`, and deliberately: Nautilus has no
+        Good-Till-Triggered concept, so routing a GTC order here would turn a
+        request to rest at the exchange into a request to rest at the broker
+        behind a trigger. Those are different orders. A caller who wants one
+        asks for it.
+        """
+        order = command.order
+        instrument = self._cache.instrument(order.instrument_id)
+        gate = submission_refusal(self._config, os.environ)
+        if gate is None and instrument is None:
+            gate = f"{order.instrument_id} is not in the cache"
+        if gate is None and self.is_degraded_by_ip:
+            gate = "this client is degraded: Dhan refused an earlier order with 'Invalid IP'."
+
+        payload = None
+        if gate is None:
+            try:
+                payload = forever_orders.place_payload(
+                    order=order, instrument=instrument,
+                    security_id=self._provider.security_id_for(order.instrument_id),
+                    client_id=self._dhan_client_id, product_type=product_type,
+                    second_leg=second_leg,
+                )
+            except (LookupError, Unsendable) as exc:
+                gate = str(exc)
+
+        if gate is not None:
+            self.generate_order_denied(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                reason=gate,
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+
+        self.generate_order_submitted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            ts_event=self._clock.timestamp_ns(),
+        )
+        try:
+            body = await self._http.post(FOREVER_ORDERS_PATH, payload)
+        except Ambiguous as exc:
+            self._log.error(
+                f"forever order {order.client_order_id} did not complete and may "
+                f"have reached Dhan ({exc}). NO EVENT EMITTED; it may be resting."
+            )
+            return
+        except DhanError as exc:
+            if isinstance(exc, IPNotWhitelisted):
+                self.is_degraded_by_ip = True
+            self.generate_order_rejected(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                reason=str(exc),
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+        self.generate_order_accepted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            venue_order_id=VenueOrderId(str(body["orderId"])),
+            ts_event=self._clock.timestamp_ns(),
+        )
+
+    async def cancel_forever_order(self, order_id: str) -> None:
+        """Delete a resting forever order. No leg: the whole order goes."""
+        try:
+            await self._http.delete(forever_orders.cancel_path(order_id))
+        except Ambiguous as exc:
+            self._log.error(
+                f"cancel of forever order {order_id} did not complete and may have "
+                f"reached Dhan ({exc}). It may still be resting."
+            )
+
+    async def generate_forever_order_reports(self) -> list[OrderStatusReport]:
+        """What is resting, from `/v2/forever/orders`.
+
+        Not `/v2/forever/all`, which Dhan's own cURL sample shows and which
+        answers 404 -- probed 2026-09-08.
+        """
+        return forever_orders.reports_from(
+            await self._http.get(FOREVER_ORDERS_PATH),
+            self._instrument_for,
+            self.account_id,
+            self._clock.timestamp_ns(),
+        )

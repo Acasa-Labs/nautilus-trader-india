@@ -1,0 +1,58 @@
+{
+  "endpoint": "POST /v2/forever/orders",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/forever/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "Dhan's Good-Till-Triggered order, and the only way to rest anything past the close -- /v2/orders takes DAY and IOC only. `orderFlag` OCO turns it into two legs, whose second is the `price1`/`triggerPrice1`/`quantity1` trio.",
+  "required_fields": [
+    "dhanClientId",
+    "orderFlag",
+    "transactionType",
+    "exchangeSegment",
+    "productType",
+    "orderType",
+    "validity",
+    "securityId",
+    "quantity",
+    "price",
+    "triggerPrice"
+  ],
+  "enums": {
+    "orderFlag": [
+      "SINGLE",
+      "OCO"
+    ],
+    "orderType": [
+      "LIMIT",
+      "MARKET"
+    ],
+    "productType": [
+      "CNC",
+      "MTF"
+    ],
+    "validity": [
+      "DAY",
+      "IOC"
+    ]
+  },
+  "body": {
+    "dhanClientId": "1000000132",
+    "correlationId": "",
+    "orderFlag": "OCO",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "CNC",
+    "orderType": "LIMIT",
+    "validity": "DAY",
+    "securityId": "1333",
+    "quantity": 5,
+    "disclosedQuantity": 1,
+    "price": 1428,
+    "triggerPrice": 1427,
+    "price1": 1420,
+    "triggerPrice1": 1419,
+    "quantity1": 10
+  }
+}

@@ -57,6 +57,7 @@ from nautilus_trader.model.enums import (
     OrderType,
     PositionSide,
     TimeInForce,
+    TriggerType,
 )
 from nautilus_trader.model.identifiers import AccountId, ClientOrderId, TradeId, VenueOrderId
 from nautilus_trader.model.instruments import Instrument
@@ -418,6 +419,13 @@ def order_status_report(
         filled_qty=lots_for(instrument, row.get("filledQty")),
         price=_price_or_none(row.get("price")),
         trigger_price=_price_or_none(row.get("triggerPrice")),
+        # Nautilus refuses a report that carries a trigger price and no trigger
+        # TYPE. Dhan does not publish what its stops watch, so DEFAULT says
+        # "the venue's own" rather than claiming last-price or mark-price --
+        # either of which would be this adapter inventing a detail.
+        trigger_type=(
+            TriggerType.DEFAULT if row.get("triggerPrice") else TriggerType.NO_TRIGGER
+        ),
         avg_px=Decimal(str(average)) if average else None,
         # The only place Dhan says why a row was refused.
         cancel_reason=(str(row["omsErrorDescription"])

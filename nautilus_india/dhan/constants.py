@@ -127,3 +127,43 @@ ORDERS_EXTERNAL_PATH = "/v2/orders/external"
 # Nautilus id (`O-19700101-000000-001-000-1`) is 27 and fits with three to
 # spare; a UUID one is 36 and does not.
 CORRELATION_ID_MAX_LEN = 30
+
+# -- super orders ------------------------------------------------------------
+# Entry, target and stop loss as ONE request, sharing one orderId. Legs are
+# addressed by the pair (orderId, legName) and by nothing else.
+SUPER_ORDERS_PATH = "/v2/super/orders"
+
+LEG_ENTRY = "ENTRY_LEG"
+LEG_TARGET = "TARGET_LEG"
+LEG_STOP_LOSS = "STOP_LOSS_LEG"
+
+# A super order takes LIMIT or MARKET only -- no stop entry -- and four of the
+# six product types. CO and BO are absent: a super order IS the bracket.
+SUPER_ORDER_TYPES = frozenset({ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET})
+SUPER_PRODUCT_TYPES = frozenset(
+    {PRODUCT_CNC, PRODUCT_INTRADAY, PRODUCT_MARGIN, PRODUCT_MTF}
+)
+
+# -- forever orders ----------------------------------------------------------
+# Dhan's Good-Till-Triggered order, and the ONLY way to rest anything past the
+# close: /v2/orders takes DAY and IOC and nothing else.
+#
+# The list path is `/v2/forever/orders`, NOT the `/v2/forever/all` that Dhan's
+# own cURL sample shows -- probed 2026-09-08, that one answers 404. The
+# endpoint table on the same page and dhanhq 2.2.0 both agree with the value
+# below. See tests/dhan/fixtures/envelope/captured/gateway_not_found.json.
+FOREVER_ORDERS_PATH = "/v2/forever/orders"
+
+ORDER_FLAG_SINGLE = "SINGLE"
+ORDER_FLAG_OCO = "OCO"
+ORDER_FLAGS = frozenset({ORDER_FLAG_SINGLE, ORDER_FLAG_OCO})
+
+# Forever orders rest in the demat account, so only the delivery product types
+# apply. INTRADAY cannot outlive the day it is named after.
+FOREVER_PRODUCT_TYPES = frozenset({PRODUCT_CNC, PRODUCT_MTF})
+FOREVER_ORDER_TYPES = frozenset({ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET})
+
+# A forever order's `legName` means something DIFFERENT from a super order's:
+# TARGET_LEG is a SINGLE order and an OCO's first leg, STOP_LOSS_LEG is an
+# OCO's second. There is no ENTRY_LEG to send.
+FOREVER_LEG_NAMES = frozenset({LEG_TARGET, LEG_STOP_LOSS})

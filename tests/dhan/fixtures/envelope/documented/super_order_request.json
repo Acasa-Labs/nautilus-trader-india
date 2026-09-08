@@ -1,0 +1,48 @@
+{
+  "endpoint": "POST /v2/super/orders",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/super-order/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "Entry, target and stop loss as ONE request. Every price field is marked required -- including `trailingJump`, which is 0 for no trailing.",
+  "required_fields": [
+    "dhanClientId",
+    "transactionType",
+    "exchangeSegment",
+    "productType",
+    "orderType",
+    "securityId",
+    "quantity",
+    "price",
+    "targetPrice",
+    "stopLossPrice",
+    "trailingJump"
+  ],
+  "enums": {
+    "orderType": [
+      "LIMIT",
+      "MARKET"
+    ],
+    "productType": [
+      "CNC",
+      "INTRADAY",
+      "MARGIN",
+      "MTF"
+    ]
+  },
+  "body": {
+    "dhanClientId": "1000000003",
+    "correlationId": "123abc678",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "CNC",
+    "orderType": "LIMIT",
+    "securityId": "11536",
+    "quantity": 5,
+    "price": 1500,
+    "targetPrice": 1600,
+    "stopLossPrice": 1400,
+    "trailingJump": 10
+  }
+}

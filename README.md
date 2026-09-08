@@ -41,7 +41,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | **shipped**, 113 tests. Full documented order surface; **never run against a live account.** |
+| `nautilus_india.dhan` — execution | **shipped**, 164 tests. Orders, super orders and forever orders; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
@@ -112,6 +112,38 @@ something structurally different:
 | --- | --- |
 | `slice_over_freeze_limit=True` | Routes to `POST /v2/orders/slicing`, which splits a quantity over the F&O freeze limit into **several orders**, each with its own id and its own fills. |
 | `after_market_order=True` | Sends the order for release at `amo_time` (`PRE_OPEN`, `OPEN`, `OPEN_30`, `OPEN_60`) rather than now. |
+
+### Super orders and forever orders
+
+Both are covered in full, and each holds a relationship the ordinary order
+path cannot.
+
+**A bracket goes out as one super order.** Submit a Nautilus order list whose
+shape is entry + target + stop and it becomes a single `POST /v2/super/orders`.
+Sent as three separate orders there would be no OCO between them, so a filled
+target leaves the stop working and the next move opens a position nobody chose.
+
+One `orderId` covers all three legs, so reports give each leg the composite id
+`{orderId}:{legName}` — keyed on `orderId` alone, two of the three would
+collide and vanish. `cancel_super_order_leg(order_id, leg)` takes the pair
+Dhan takes. **Cancelling a target or stop leg on its own cannot be undone** —
+Dhan will not let the same leg be added again — so the client logs a warning
+before it does; cancel `ENTRY_LEG` to cancel all three.
+
+**Forever orders rest past the close**, which `/v2/orders` cannot do at all.
+`submit_forever_order(command, product_type="CNC")` sends one; pass
+`second_leg=` for an OCO pair where either firing cancels the other. It is a
+separate call rather than a route for `GTC` on purpose: Nautilus has no
+Good-Till-Triggered concept, and quietly turning "rest at the exchange" into
+"rest at the broker behind a trigger" would be a different order from the one
+asked for. A forever order **requires** a trigger price — that is what the
+*triggered* in Good-Till-Triggered means.
+
+> Dhan's forever-order page contradicts itself on the list path: the endpoint
+> table says `GET /forever/orders`, the cURL sample says `GET /v2/forever/all`.
+> Probed 2026-09-08 — the first works, the second answers **404**. This adapter
+> uses the first, and the 404 body is captured in the corpus because it is a
+> fifth error shape and not Dhan's own.
 
 **Known gap:** Dhan publishes no market-feed segment code for NSE commodity,
 so its 23,870 `OPTFUT` contracts are listed but not subscribable. Dhan's own

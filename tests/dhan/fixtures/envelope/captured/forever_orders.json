@@ -1,0 +1,12 @@
+{
+  "endpoint": "GET /v2/forever/orders",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T10:41:29+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "`GET /v2/forever/orders` answers 200 with a bare array, which settles a contradiction in Dhan's own documentation -- see gateway_not_found.json. dhanhq 2.2.0's `get_forever` agrees. Empty because this account holds no forever orders.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": []
+}

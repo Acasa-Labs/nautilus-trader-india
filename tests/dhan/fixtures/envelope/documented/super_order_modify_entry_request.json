@@ -1,0 +1,20 @@
+{
+  "endpoint": "PUT /v2/super/orders/{order-id}",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/super-order/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "ENTRY_LEG modifies the WHOLE super order, and only while the entry is PENDING or PART_TRADED. Once it is TRADED only the target and stop legs move, and only their price and trailing jump.",
+  "body": {
+    "dhanClientId": "1000000009",
+    "orderId": "112111182045",
+    "orderType": "LIMIT",
+    "legName": "ENTRY_LEG",
+    "quantity": "40",
+    "price": "1300",
+    "targetPrice": 1450,
+    "stopLossPrice": 1350,
+    "trailingJump": 20
+  }
+}

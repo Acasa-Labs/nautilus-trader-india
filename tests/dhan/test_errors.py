@@ -320,3 +320,21 @@ def test_the_client_level_outcomes_are_not_catchable_as_an_ordinary_failure():
     whichever order the excepts happen to be written in."""
     assert not issubclass(IPNotWhitelisted, DhanApiError)
     assert not issubclass(RateLimited, DhanApiError)
+
+
+def test_a_gateway_404_names_the_path_it_could_not_find():
+    """A FIFTH shape, and not Dhan's own: `{timestamp, status, error, path}` is
+    the gateway's default, with `status` as an INTEGER. It arrives when a path
+    does not exist, which is a programming error rather than a trading one --
+    so 'Dhan answered status=404' is useless and the message has to name the
+    path. Found by probing a contradiction in Dhan's own docs."""
+    with pytest.raises(DhanApiError) as exc:
+        classify(corpus.body("gateway_not_found"))
+    assert "Not Found" in exc.value.reason
+    assert "/v2/forever/all" in exc.value.reason
+    assert exc.value.code == "404"
+
+
+def test_the_forever_order_list_is_a_bare_array():
+    """The endpoint that settled which of Dhan's two documented paths is real."""
+    assert classify(corpus.body("forever_orders")) == []

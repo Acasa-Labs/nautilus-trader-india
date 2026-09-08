@@ -1,0 +1,61 @@
+{
+  "endpoint": "GET /v2/super/orders",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/super-order/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "The target and stop legs are NESTED under the entry, and every one of them carries the ENTRY'S orderId -- so anything keying its own orders on orderId alone collapses three into one. Dhan's own modify and cancel take the pair (orderId, legName).",
+  "unverified_spelling": "`totalQuatity` is how Dhan's documentation spells it. UNVERIFIED: this account has never placed a super order, so GET /v2/super/orders answers [] and the field has never arrived here; dhanhq 2.2.0 returns raw dicts and never names it either. It may be a documentation typo or a real API field name -- `availabelBalance` on /v2/fundlimit IS misspelled in the live API (captured, see captured/fundlimit.json), so the precedent exists and neither spelling can be assumed. The reader tries both, plus `remainingQuantity`, and does not depend on which is real.",
+  "body": [
+    {
+      "dhanClientId": "1100003626",
+      "orderId": "5925022734212",
+      "correlationId": "string",
+      "orderStatus": "PENDING",
+      "transactionType": "BUY",
+      "exchangeSegment": "NSE_EQ",
+      "productType": "CNC",
+      "orderType": "LIMIT",
+      "validity": "DAY",
+      "tradingSymbol": "HDFCBANK",
+      "securityId": "1333",
+      "quantity": 10,
+      "remainingQuantity": 10,
+      "ltp": 1660.95,
+      "price": 1500,
+      "afterMarketOrder": false,
+      "legName": "ENTRY_LEG",
+      "exchangeOrderId": "11925022734212",
+      "createTime": "2025-02-27 19:09:42",
+      "updateTime": "2025-02-27 19:09:42",
+      "exchangeTime": "2025-02-27 19:09:42",
+      "omsErrorDescription": "",
+      "averageTradedPrice": 0,
+      "filledQty": 0,
+      "legDetails": [
+        {
+          "orderId": "5925022734212",
+          "legName": "STOP_LOSS_LEG",
+          "transactionType": "SELL",
+          "totalQuatity": 0,
+          "remainingQuantity": 0,
+          "triggeredQuantity": 0,
+          "price": 1400,
+          "orderStatus": "PENDING",
+          "trailingJump": 10
+        },
+        {
+          "orderId": "5925022734212",
+          "legName": "TARGET_LEG",
+          "transactionType": "SELL",
+          "remainingQuantity": 0,
+          "triggeredQuantity": 0,
+          "price": 1550,
+          "orderStatus": "PENDING",
+          "trailingJump": 0
+        }
+      ]
+    }
+  ]
+}

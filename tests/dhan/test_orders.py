@@ -548,3 +548,30 @@ def test_an_unknown_leg_name_is_refused():
             trigger_price="", validity="DAY", order_type="LIMIT",
             leg_name="MIDDLE_LEG",
         )
+
+
+def test_a_stop_order_row_reports_its_trigger(nifty_option):
+    """REGRESSION. Nautilus refuses a report that carries a trigger price and
+    no trigger TYPE, and this converter passed one without the other from the
+    day it was written. Nothing caught it because every fixture row has
+    `triggerPrice: 0.0` -- an ordinary limit order has no trigger, so the
+    branch never ran until a stop order existed.
+
+    Dhan does not publish what its stops watch, so the type is DEFAULT --
+    "the venue's own" -- rather than a claim of last-price or mark-price that
+    this adapter has no basis for.
+    """
+    report = orders.order_status_report(
+        _order_row(quantity=65, orderType="STOP_LOSS", price=100.25, triggerPrice=99.0),
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.trigger_price == Price.from_str("99.0")
+    assert report.trigger_type.name == "DEFAULT"
+
+
+def test_a_row_with_no_trigger_claims_none(nifty_option):
+    report = orders.order_status_report(
+        _order_row(quantity=65), nifty_option, ACCOUNT, UUID4(), 0
+    )
+    assert report.trigger_price is None
+    assert report.trigger_type.name == "NO_TRIGGER"

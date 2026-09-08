@@ -1,0 +1,21 @@
+{
+  "endpoint": "PUT /v2/forever/orders/{order-id}",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/forever/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "`legName` here means something different from the super order's: for a forever order it is TARGET_LEG for a SINGLE and for an OCO's first leg, STOP_LOSS_LEG for an OCO's second.",
+  "body": {
+    "dhanClientId": "1000000132",
+    "orderId": "5132208051112",
+    "orderFlag": "SINGLE",
+    "orderType": "LIMIT",
+    "legName": "TARGET_LEG",
+    "quantity": 15,
+    "price": 1421,
+    "disclosedQuantity": 1,
+    "triggerPrice": 1420,
+    "validity": "DAY"
+  }
+}

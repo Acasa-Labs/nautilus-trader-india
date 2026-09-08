@@ -1,0 +1,32 @@
+{
+  "endpoint": "GET /v2/forever/orders",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/forever/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "`orderType` on the way OUT carries SINGLE or OCO -- the order FLAG -- not the LIMIT/MARKET it was sent as. Reading it as an order type maps a resting GTT onto a type that does not exist.",
+  "body": [
+    {
+      "dhanClientId": "1000000132",
+      "orderId": "1132208051115",
+      "orderStatus": "CONFIRM",
+      "transactionType": "BUY",
+      "exchangeSegment": "NSE_EQ",
+      "productType": "CNC",
+      "orderType": "SINGLE",
+      "tradingSymbol": "HDFCBANK",
+      "securityId": "1333",
+      "quantity": 10,
+      "price": 1428,
+      "triggerPrice": 1427,
+      "legName": "ENTRY_LEG",
+      "createTime": "2022-08-05 12:41:19",
+      "updateTime": null,
+      "exchangeTime": null,
+      "drvExpiryDate": null,
+      "drvOptionType": null,
+      "drvStrikePrice": 0
+    }
+  ]
+}

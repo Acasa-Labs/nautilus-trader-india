@@ -172,6 +172,19 @@ def _failure_in_object(body: dict[str, Any]) -> _Failure | None:
     if status is None or str(status).lower() == "success":
         return None
 
+    # The gateway's own error, which is not Dhan's: `{timestamp, status,
+    # error, path}` with an INTEGER status. It means the path does not exist,
+    # which is a programming error, so the message has to name the path --
+    # "status=404" tells whoever reads the log nothing at all.
+    if "error" in body and "path" in body:
+        return (
+            f"{body['error']} for {body['path']} -- that path does not exist. "
+            "This is the gateway answering, not Dhan: check the endpoint "
+            "against the docs, which have contradicted themselves before.",
+            str(status),
+            "GatewayError",
+        )
+
     # The envelope family announces failure with `status` alone and hides the
     # message under `data` as a {code: message} map. No error field appears at
     # all, so a rule keyed on one would return that map to the caller as data.

@@ -1,0 +1,15 @@
+{
+  "endpoint": "GET /v2/forever/all",
+  "http_status": 404,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T10:41:30+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "A FIFTH error shape, and not Dhan's own: `{timestamp, status, error, path}` is the gateway's default, with `status` as an INTEGER rather than a word. It arrives when a path does not exist -- which is a programming error, so the message has to name the path. Found by probing: Dhan's forever-order page lists `GET /forever/orders` in its endpoint table and `GET /v2/forever/all` in the cURL under 'All Forever Order Detail'. The first is right; the second 404s.",
+  "scrubbed": [],
+  "body": {
+    "timestamp": 1788844290451,
+    "status": 404,
+    "error": "Not Found",
+    "path": "/v2/forever/all"
+  }
+}
