@@ -440,3 +440,201 @@ async def test_a_modify_with_no_venue_id_is_not_sent(nifty_option, live_env, rec
     await client._modify_order(_modify(nifty_option, venue_order_id=None))
     assert seen == []
     assert _names(recorded) == ["generate_order_modify_rejected"]
+
+
+# -- the report generators ---------------------------------------------------
+#
+# Every row below is a `documented-never-observed` fixture routed to the test
+# instrument: this account has never traded, so no real row exists to use.
+
+from nautilus_trader.execution.messages import (  # noqa: E402
+    GenerateFillReports,
+    GenerateOrderStatusReport,
+    GenerateOrderStatusReports,
+    GeneratePositionStatusReports,
+)
+from nautilus_trader.model.enums import PositionSide  # noqa: E402
+
+from nautilus_india.dhan.errors import DhanApiError  # noqa: E402
+
+
+def _row(name, **overrides):
+    """A documented row, addressed to the instrument these tests use."""
+    return dict(corpus.body(name)) | {
+        "securityId": "43492", "exchangeSegment": "NSE_FNO"
+    } | overrides
+
+
+def _orders_command():
+    return GenerateOrderStatusReports(
+        instrument_id=None, start=None, end=None, open_only=False,
+        command_id=UUID4(), ts_init=0,
+    )
+
+
+async def test_order_status_reports_come_back_from_the_order_book(
+    nifty_option, live_env
+):
+    async def handler(request):
+        return httpx.Response(200, json=[_row("order_book_row", quantity=65)])
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_order_status_reports(_orders_command())
+    assert len(reports) == 1
+    assert reports[0].quantity == Quantity.from_int(1)
+    assert reports[0].account_id == client.account_id
+    assert reports[0].instrument_id == nifty_option.id
+
+
+async def test_an_empty_order_book_is_no_reports_not_an_error(nifty_option, live_env):
+    """This account's real answer, captured today: `[]`. A legitimate answer,
+    and byte-identical to a holiday."""
+    async def handler(request):
+        return httpx.Response(200, json=corpus.body("orders_list"))
+
+    client = await _client(handler, nifty_option)
+    assert await client.generate_order_status_reports(_orders_command()) == []
+
+
+async def test_a_row_for_an_unknown_instrument_is_skipped_loudly(
+    nifty_option, live_env
+):
+    """A row this adapter cannot map is a position it cannot name. Dropping it
+    silently is risk nobody is sizing against, so it is logged as an error and
+    the rest of the book still reports."""
+    async def handler(request):
+        return httpx.Response(200, json=[
+            _row("order_book_row", quantity=65),
+            _row("order_book_row", quantity=65, securityId="00000000"),
+        ])
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_order_status_reports(_orders_command())
+    assert len(reports) == 1
+
+
+async def test_one_order_status_report_asks_for_that_order(nifty_option, live_env):
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=[_row("order_book_row", quantity=65)])
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=None,
+        venue_order_id=VenueOrderId("112111182198"), command_id=UUID4(), ts_init=0,
+    ))
+    assert seen["path"] == "/v2/orders/112111182198"
+    assert report is not None
+
+
+async def test_an_unknown_order_id_is_none_not_an_invented_report(
+    nifty_option, live_env
+):
+    """Measured today: `GET /v2/orders/00000000` answers 200 with `[]`. So an
+    id that cannot exist is indistinguishable from one with nothing to say,
+    and None is the only honest answer."""
+    async def handler(request):
+        return httpx.Response(200, json=corpus.body("order_unknown_id"))
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=None,
+        venue_order_id=VenueOrderId("00000000"), command_id=UUID4(), ts_init=0,
+    ))
+    assert report is None
+
+
+async def test_a_single_order_that_answers_an_object_is_read_too(
+    nifty_option, live_env
+):
+    """Dhan documents GET /v2/orders/{id} as returning an OBJECT, and the one
+    live call this repository has made returned an ARRAY. Both are read,
+    because which one it is has never been observed with a real order in the
+    book."""
+    async def handler(request):
+        return httpx.Response(200, json=_row("order_book_row", quantity=65))
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=None,
+        venue_order_id=VenueOrderId("112111182198"), command_id=UUID4(), ts_init=0,
+    ))
+    assert report is not None
+
+
+async def test_fill_reports_come_back_from_the_trade_book(nifty_option, live_env):
+    async def handler(request):
+        return httpx.Response(200, json=[_row("trade_book_row", tradedQuantity=65)])
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_fill_reports(GenerateFillReports(
+        instrument_id=None, venue_order_id=None, start=None, end=None,
+        command_id=UUID4(), ts_init=0,
+    ))
+    assert len(reports) == 1
+    assert reports[0].last_qty == Quantity.from_int(1)
+
+
+async def test_position_reports_come_back_from_the_position_book(
+    nifty_option, live_env
+):
+    async def handler(request):
+        return httpx.Response(200, json=[_row(
+            "position_row", netQty=-65, positionType="SHORT", sellAvg=100.25
+        )])
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_position_status_reports(
+        GeneratePositionStatusReports(
+            instrument_id=None, start=None, end=None, command_id=UUID4(), ts_init=0
+        )
+    )
+    assert len(reports) == 1
+    assert reports[0].position_side is PositionSide.SHORT
+
+
+async def test_mass_status_gathers_all_three_books(nifty_option, live_env):
+    async def handler(request):
+        path = request.url.path
+        if path == "/v2/orders":
+            return httpx.Response(200, json=[_row("order_book_row", quantity=65)])
+        if path == "/v2/trades":
+            return httpx.Response(200, json=[_row("trade_book_row", tradedQuantity=65)])
+        if path == "/v2/positions":
+            return httpx.Response(200, json=[_row("position_row", netQty=65)])
+        raise AssertionError(f"unexpected path {path}")
+
+    client = await _client(handler, nifty_option)
+    status = await client.generate_mass_status()
+    assert len(status.order_reports) == 1
+    assert len(status.fill_reports) == 1
+    assert len(status.position_reports) == 1
+    assert status.account_id == client.account_id
+
+
+async def test_a_failed_book_read_does_not_invent_an_empty_one(
+    nifty_option, live_env
+):
+    """An empty list means 'nothing is open'. Returning one for a read that
+    FAILED tells the engine every order is gone, and it reopens them all."""
+    async def handler(request):
+        return httpx.Response(500, json=corpus.body("holdings"))
+
+    client = await _client(handler, nifty_option)
+    with pytest.raises(DhanApiError):
+        await client.generate_order_status_reports(_orders_command())
+
+
+async def test_a_timed_out_book_read_is_not_an_empty_book_either(
+    nifty_option, live_env
+):
+    """A GET that fails is a failed read -- not ambiguous, and not empty."""
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = await _client(handler, nifty_option)
+    with pytest.raises(Exception) as exc:
+        await client.generate_order_status_reports(_orders_command())
+    assert not isinstance(exc.value, list)

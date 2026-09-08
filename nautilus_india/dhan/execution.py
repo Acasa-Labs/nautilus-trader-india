@@ -41,8 +41,18 @@ from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.messages import (
     CancelAllOrders,
     CancelOrder,
+    GenerateFillReports,
+    GenerateOrderStatusReport,
+    GenerateOrderStatusReports,
+    GeneratePositionStatusReports,
     ModifyOrder,
     SubmitOrder,
+)
+from nautilus_trader.execution.reports import (
+    ExecutionMassStatus,
+    FillReport,
+    OrderStatusReport,
+    PositionStatusReport,
 )
 from nautilus_trader.live.execution_client import LiveExecutionClient
 from nautilus_trader.model.currencies import INR
@@ -57,13 +67,21 @@ from nautilus_trader.model.identifiers import (
 
 from nautilus_india.dhan.auth import from_env
 from nautilus_india.dhan.config import DhanExecClientConfig, submission_refusal
-from nautilus_india.dhan.constants import ORDERS_PATH
+from nautilus_india.dhan.constants import (
+    ORDERS_PATH,
+    POSITIONS_PATH,
+    SEGMENT_CODES,
+    TRADES_PATH,
+)
 from nautilus_india.dhan.errors import Ambiguous, DhanError, IPNotWhitelisted
 from nautilus_india.dhan.http import DhanHttpClient
 from nautilus_india.dhan.orders import (
     Unsendable,
+    fill_report,
     modify_payload,
+    order_status_report,
     place_payload,
+    position_status_report,
     units_for,
     validity_for,
 )
@@ -392,3 +410,104 @@ class DhanExecutionClient(LiveExecutionClient):
             reason=reason,
             ts_event=self._clock.timestamp_ns(),
         )
+
+    # -- reports ---------------------------------------------------------
+    #
+    # A FAILED READ IS NOT AN EMPTY BOOK. Nothing here catches a transport
+    # error to answer `[]`. An empty list means "nothing is open", and
+    # returning one for a read that FAILED tells the engine every order is
+    # gone -- after which it reopens them all.
+
+    def _instrument_for(self, row: dict):
+        """The instrument a Dhan row refers to, or None if we cannot say."""
+        code = SEGMENT_CODES.get(str(row.get("exchangeSegment") or ""))
+        if code is None:
+            return None
+        instrument_id = self._provider.instrument_id_for(str(row.get("securityId")), code)
+        if instrument_id is None:
+            return None
+        return self._cache.instrument(instrument_id) or self._provider.find(instrument_id)
+
+    def _reports_from(self, rows, build) -> list:
+        """Map rows to reports, skipping -- loudly -- the ones we cannot map.
+
+        A row this adapter cannot resolve is a holding it cannot name.
+        Dropping it silently is exactly the risk nobody is sizing against, so
+        it is logged as an error and the rest of the book still reports.
+        """
+        found = []
+        ts_init = self._clock.timestamp_ns()
+        for row in rows or []:
+            instrument = self._instrument_for(row)
+            if instrument is None:
+                self._log.error(
+                    f"Dhan reported securityId {row.get('securityId')!r} on segment "
+                    f"{row.get('exchangeSegment')!r}, which is not in the loaded "
+                    "scrip master. The row is NOT reported: it is a holding this "
+                    "adapter cannot name."
+                )
+                continue
+            found.append(build(row, instrument, self.account_id, UUID4(), ts_init))
+        return found
+
+    async def generate_order_status_report(
+        self, command: GenerateOrderStatusReport
+    ) -> OrderStatusReport | None:
+        if command.venue_order_id is None:
+            # Dhan has GET /v2/orders/external/{correlationId} for the other
+            # direction, but it has never been called from here and its answer
+            # shape is unobserved. Better to say nothing than to guess.
+            return None
+        body = await self._http.get(f"{ORDERS_PATH}/{command.venue_order_id.value}")
+        # Dhan documents this endpoint as returning an OBJECT and the one live
+        # call this repository has made returned an ARRAY. Both are read.
+        rows = body if isinstance(body, list) else [body]
+        # Measured: an order id that cannot exist answers 200 with `[]`, so
+        # "no such order" and "nothing to say" are the same answer and None is
+        # the only one this can honestly give.
+        reports = self._reports_from(rows, order_status_report)
+        return reports[0] if reports else None
+
+    async def generate_order_status_reports(
+        self, command: GenerateOrderStatusReports
+    ) -> list[OrderStatusReport]:
+        return self._reports_from(await self._http.get(ORDERS_PATH), order_status_report)
+
+    async def generate_fill_reports(
+        self, command: GenerateFillReports
+    ) -> list[FillReport]:
+        return self._reports_from(await self._http.get(TRADES_PATH), fill_report)
+
+    async def generate_position_status_reports(
+        self, command: GeneratePositionStatusReports
+    ) -> list[PositionStatusReport]:
+        return self._reports_from(
+            await self._http.get(POSITIONS_PATH), position_status_report
+        )
+
+    async def generate_mass_status(
+        self, lookback_mins: int | None = None
+    ) -> ExecutionMassStatus | None:
+        """All three books at once.
+
+        `lookback_mins` is ignored, and deliberately: Dhan's order, trade and
+        position endpoints return the DAY's, with no window parameter.
+        Pretending to honour it would report a filter that was never applied.
+        """
+        status = ExecutionMassStatus(
+            client_id=self.id,
+            account_id=self.account_id,
+            venue=self.venue,
+            report_id=UUID4(),
+            ts_init=self._clock.timestamp_ns(),
+        )
+        status.add_order_reports(
+            self._reports_from(await self._http.get(ORDERS_PATH), order_status_report)
+        )
+        status.add_fill_reports(
+            self._reports_from(await self._http.get(TRADES_PATH), fill_report)
+        )
+        status.add_position_reports(
+            self._reports_from(await self._http.get(POSITIONS_PATH), position_status_report)
+        )
+        return status
