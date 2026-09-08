@@ -30,7 +30,7 @@ Not a fork.
 > | **Client order ids are hashed, not passed through** | Dhan's `correlationId` accepts 25 characters — measured; the docs say 30 — and a default Nautilus `ClientOrderId` is 27, so it cannot fit. Anything too long is sent as an 18-character `blake2s` digest, which is deterministic and maps back by recomputation. The id in Dhan's own order book is therefore **not human-readable**. |
 > | A `MARKET` order does not fill at the market | Dhan converts an API `MARKET` order into a limit order with **market-protection pricing**, so it fills at a limit neither you nor this adapter chose. The order is sent as asked and the adapter logs a warning when it does. Send a `LIMIT` order to name your own price. |
 > | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
-> | Fills arrive by polling, not by socket | `generate_fill_reports` reads `GET /v2/trades`. Dhan's order-update WebSocket is not wired up yet, so a fill is seen at the next reconciliation rather than the instant it happens. |
+> | Fills arrive by polling unless you opt in | `generate_fill_reports` reads `GET /v2/trades`, so a fill is seen at the next reconciliation rather than the instant it happens. The order-update socket above reports it immediately and is off by default, because it has never been observed. |
 > | Commission is reported as zero | Dhan does not send one: `GET /v2/trades` carries no charge and the margin calculator returns `brokerage: 0.0`. `core.fees` models the charge; putting that estimate into a broker record would launder our own number as the venue's. |
 >
 > **The API will change without deprecation before 1.0.** Pin an exact version.
@@ -45,7 +45,8 @@ Not a fork.
 | Component | State |
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
-| `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
+| `nautilus_india.dhan` — instrument master, binary decoder, feed protocol, tick parsers | **shipped**, 183 tests |
+| `nautilus_india.dhan` — the market data **client** | **not wired.** `DhanDataClient` has no `_connect` and no `_subscribe_*`; they fall through to the base class and raise. See [`docs/market-data.md`](docs/market-data.md) |
 | `nautilus_india.dhan` — execution | **shipped**, 216 tests. Orders, super orders, forever orders and the order-update stream. Exercised against Dhan's **sandbox**; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
@@ -76,11 +77,17 @@ from nautilus_india.dhan import DhanDataClientConfig, DhanLiveDataClientFactory
 node.add_data_client_factory("DHAN", DhanLiveDataClientFactory)
 ```
 
-See [`examples/dhan_market_data.py`](examples/dhan_market_data.py) for a
-runnable node, and [`examples/dhan_execution.py`](examples/dhan_execution.py)
-for the order path. **Run the second one without `--live` first**: it will be
-denied, and the denial names both switches, which is the fastest way to watch
-the gate work before trusting it with money.
+**Registering is all that works today.** The node builds and then raises
+`NotImplementedError` when it starts, because the client that joins the
+decoder, the feed protocol and the parsers has not been written. Those three
+are built and tested; see [`docs/market-data.md`](docs/market-data.md) for
+what exists and [`ROADMAP.md`](ROADMAP.md) for when it is planned.
+`examples/dhan_market_data.py` therefore does not run to completion.
+
+See [`examples/dhan_execution.py`](examples/dhan_execution.py) for the order
+path. **Run it without `--live` first**: it will be denied, and the denial
+names both switches, which is the fastest way to watch the gate work before
+trusting it with money.
 
 Execution registers the same way, and registering it does **not** arm it:
 
@@ -204,16 +211,29 @@ charged. Both are documented with their direction of error and their measured
 size in [`docs/UPSTREAM_GAPS.md`](docs/UPSTREAM_GAPS.md). Read it before
 holding a position to expiry or legging out of a multi-leg short.
 
+## Documentation
+
+| | |
+| --- | --- |
+| [`docs/`](docs/README.md) | Task guides: getting started, the core without a broker, market data, execution, configuration, troubleshooting |
+| [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md) | What Dhan's API actually does, where its documentation is wrong, and how each was measured |
+| [`docs/UPSTREAM_GAPS.md`](docs/UPSTREAM_GAPS.md) | NautilusTrader behaviours worked around, with the direction and size of each error |
+| [`ROADMAP.md`](ROADMAP.md) | What is planned, in order, and what "done" means for each |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to work on it — and how to contribute a measurement, which is worth more here than code |
+| [`SECURITY.md`](SECURITY.md) | Reporting privately, and handling a token that lives 24 hours |
+
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev      # or: pip install -e ".[dev]"
+pytest                   # 546 tests, no network, no credentials
 ruff check .
 ```
 
 Contributor and agent rules — including why the vendor SDKs are never imported
-at runtime — are in [`CLAUDE.md`](CLAUDE.md).
+at runtime — are in [`CLAUDE.md`](CLAUDE.md). [`CONTRIBUTING.md`](CONTRIBUTING.md)
+covers setup, what a good pull request looks like, and the fixture provenance
+rules.
 
 ## Credits
 

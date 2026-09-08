@@ -1,0 +1,27 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Is it a known gap?
+    url: https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/README.md
+    about: >
+      The README's gap table lists what is unverified or wrong, in the
+      direction that costs money. The market data client is not wired and no
+      order has ever filled — both are known and both are on the roadmap.
+
+  - name: Is it not built yet?
+    url: https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/ROADMAP.md
+    about: >
+      The roadmap lists what is planned, in order, with what "done" means for
+      each. The Kite adapter is not started.
+
+  - name: Is it Dhan's API rather than this package?
+    url: https://dhanhq.co/
+    about: >
+      Take API outages, account problems, IP whitelisting and token issues to
+      Dhan. If it is behaviour this package should defend against, file a
+      Venue behaviour issue here as well.
+
+  - name: A security problem, or an exposed credential
+    url: https://github.com/Acasa-Labs/nautilus-trader-india/security/advisories/new
+    about: >
+      Report privately, never in a public issue. If you have exposed a token,
+      rotate it with Dhan first — it lives 24 hours from minting.

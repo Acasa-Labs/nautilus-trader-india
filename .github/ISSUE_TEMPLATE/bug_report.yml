@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in this package behaves differently from what it says it does
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a credential, access token, client id, order id or account
+        balance into this form.** If you already have one in a log you are about
+        to attach, scrub it first. See [SECURITY.md](https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/SECURITY.md).
+
+        Before filing: the [README's gap table](https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/README.md) lists
+        what is known to be wrong or unverified, and
+        [ROADMAP.md](https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/ROADMAP.md) lists what is not built yet. The
+        market data client is not wired, and orders have never run against a
+        live account — both are known.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The smallest code that shows it. If it needs a live account or a
+        socket, say so — a lot of this package cannot be reproduced without
+        one, and that is useful to know rather than a reason not to file.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Traceback or log output
+      description: Verbatim, scrubbed of credentials and account identifiers.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: nautilus-trader-india version
+      placeholder: "0.1.0, or a commit sha"
+    validations:
+      required: true
+
+  - type: input
+    id: nautilus-version
+    attributes:
+      label: nautilus-trader version
+      description: "`python -c 'import nautilus_trader; print(nautilus_trader.__version__)'`"
+      placeholder: "1.231.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+      placeholder: "3.13.2, macOS 15.6"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part
+      options:
+        - core — symbology, instruments, lots, calendar
+        - core — fees or margin
+        - dhan — instrument master or scrip parsing
+        - dhan — market data, binary decoder, feed protocol
+        - dhan — execution, orders, reports
+        - packaging, install, or CI
+        - something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: money
+    attributes:
+      label: Did this involve real money?
+      description: >
+        Not a requirement, and not a judgement. It changes how urgently this is
+        looked at.
+      options:
+        - label: This happened on a live account with real orders
+        - label: I have scrubbed every credential and account identifier above
+          required: true

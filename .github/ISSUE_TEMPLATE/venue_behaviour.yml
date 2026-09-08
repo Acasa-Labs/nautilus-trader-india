@@ -1,0 +1,105 @@
+name: Venue behaviour
+description: Dhan does something the docs do not say, or contradicts what this package assumes
+title: "dhan: "
+labels: ["venue-behaviour", "measurement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the most valuable issue you can file here.**
+
+        Dhan's documentation has been wrong about Dhan's own API in ways that
+        silently break orders — `correlationId` caps at 25 characters and not
+        the documented 30, and the documented request body is refused outright.
+        Both were found by calling the API, and both had passing unit tests
+        agreeing with the wrong value.
+
+        What makes a report usable is **provenance and a date**. An undated
+        observation about an API that changes is a rumour. Confirmed reports
+        end up in [docs/DHAN_API_NOTES.md](https://github.com/Acasa-Labs/nautilus-trader-india/blob/main/docs/DHAN_API_NOTES.md)
+        and, where a body is attached, in the fixture corpus.
+
+        **Scrub before you paste.** Client ids, order ids, balances, holdings.
+
+  - type: textarea
+    id: claim
+    attributes:
+      label: What Dhan actually does
+      description: One sentence. "GET /v2/holdings returns 500 when the portfolio is empty."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the docs, or this package, assume instead
+      description: Link the doc page or the line of code, if you have it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provenance
+    attributes:
+      label: Where this was observed
+      description: >
+        These are not equally strong, and the difference has already mattered.
+        The sandbox is not a faithful mirror of production.
+      options:
+        - live — a call to api.dhan.co on a real account
+        - sandbox — a call to sandbox.dhan.co
+        - documented — the published spec says so, I have not called it
+        - another client or SDK, not called directly
+    validations:
+      required: true
+
+  - type: input
+    id: observed-at
+    attributes:
+      label: Date observed
+      description: An API changes. A measurement without a date cannot be trusted later.
+      placeholder: "2026-09-08"
+    validations:
+      required: true
+
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint
+      placeholder: "GET /v2/holdings"
+    validations:
+      required: true
+
+  - type: textarea
+    id: request
+    attributes:
+      label: The request
+      description: Path, method, and body. Scrubbed.
+      render: json
+
+  - type: textarea
+    id: response
+    attributes:
+      label: The response, verbatim
+      description: >
+        Body and HTTP status. Verbatim matters: this API returns HTTP 200 for
+        failures, so a paraphrase loses the evidence. Scrubbed.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequence
+    attributes:
+      label: What it breaks
+      description: >
+        Especially if it breaks in the direction that costs money — an order
+        that looks placed and is not, a charge that is under-counted, a state
+        read as its opposite.
+
+  - type: checkboxes
+    id: scrubbed
+    attributes:
+      label: Before you file
+      options:
+        - label: Every credential, client id, order id, balance and holding above is scrubbed
+          required: true
