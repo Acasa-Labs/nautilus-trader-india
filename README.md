@@ -44,7 +44,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | **shipped**, 215 tests. Orders, super orders, forever orders and the order-update stream. Exercised against Dhan's **sandbox**; **never run against a live account.** |
+| `nautilus_india.dhan` — execution | **shipped**, 216 tests. Orders, super orders, forever orders and the order-update stream. Exercised against Dhan's **sandbox**; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
