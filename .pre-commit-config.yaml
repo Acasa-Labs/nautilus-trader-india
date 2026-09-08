@@ -1,0 +1,13 @@
+# Secret scanning before a commit is written. Install once, per clone:
+#
+#     pip install pre-commit && pre-commit install
+#
+# `.git/hooks` is not committed, so a fresh clone has no protection until that
+# runs. This file is the shared half; CI is the half that does not depend on
+# anyone remembering. A contributor who skips both, or commits with
+# `--no-verify`, is still caught by the `secrets` job before a merge.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
