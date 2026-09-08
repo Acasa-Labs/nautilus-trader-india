@@ -242,6 +242,56 @@ forever. Note the sandbox does **not** reproduce it — see below.
 
 ---
 
+## The order-update stream
+
+`wss://api-order-update.dhan.co`, JSON, authorised with a `LoginReq` frame
+carrying `MsgCode: 42` and the access token. **Never observed.** The socket
+accepts a connection with sandbox credentials and closes immediately -- it is
+a production host and the sandbox token is not valid there -- and the live
+token was deliberately not used while another process records a live feed on
+that account.
+
+### It speaks a different dialect from REST
+
+Same facts, other words, on every field that matters:
+
+| REST | socket |
+| --- | --- |
+| `transactionType` `BUY` / `SELL` | `TxnType` `B` / `S` |
+| `productType` `INTRADAY` | `Product` `C` `I` `M` `F` `V` `B` |
+| `orderType` `LIMIT` | `OrderType` `LMT` `MKT` `SL` `SLM` |
+| `orderStatus` `PENDING` | `Status` `"Pending"` — or `"PENDING"` |
+| `exchangeSegment` `NSE_FNO` | `Exchange` `NSE` + `Segment` `D` |
+
+**The casing is genuinely ambiguous.** Dhan's sample message says
+`"Cancelled"`; the parameter table on the same page lists the enum in upper
+case, which is also what the REST order book returns. A reader keyed on one
+casing sees no status at all from the other, so this adapter matches
+case-insensitively.
+
+### It carries no trade id
+
+`TradedQty` and `AvgTradedPrice` say how much filled and at what average, and
+there is no per-fill identity anywhere in the message. So a fill on the stream
+is a **signal to ask** `GET /v2/trades/{orderId}`, which does carry
+`exchangeTradeId`. Emitting a fill straight from the socket would put a
+fabricated trade id into a reconciliation.
+
+### It carries the whole account
+
+Dhan's words: updates arrive "irrespective of the platform via which it was
+placed". An order from their mobile app is not ours, and its `CorrelationId`
+is one Dhan generated. An update matching none of our client order ids is
+dropped rather than turned into an event.
+
+### Its JSON sample does not parse
+
+Four defects in Dhan's own sample: `"AlgoOrdNo": ,` and `"StrikePrice": ,`
+have no value, `"multiplier": 1` has no trailing comma, and **`Remarks`
+appears twice in one object**.
+
+---
+
 ## The sandbox is not production
 
 `https://sandbox.dhan.co/v2` — same paths, different host, its own token and

@@ -175,3 +175,7 @@ FOREVER_ORDER_TYPES = frozenset({ORDER_TYPE_LIMIT, ORDER_TYPE_MARKET})
 # TARGET_LEG is a SINGLE order and an OCO's first leg, STOP_LOSS_LEG is an
 # OCO's second. There is no ENTRY_LEG to send.
 FOREVER_LEG_NAMES = frozenset({LEG_TARGET, LEG_STOP_LOSS})
+
+# Realtime order updates, JSON over a WebSocket. A different service from the
+# market feed, and a different connection budget.
+ORDER_UPDATE_WSS = "wss://api-order-update.dhan.co"

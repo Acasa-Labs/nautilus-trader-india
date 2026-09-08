@@ -48,6 +48,12 @@ class DhanExecClientConfig(LiveExecClientConfig, frozen=True):
     # required -- it applies only once `after_market_order` is true.
     after_market_order: bool = False
     amo_time: str = "OPEN"
+    # Subscribe to wss://api-order-update.dhan.co, which reports a fill when
+    # it happens rather than at the next reconciliation. Off by default: it is
+    # an optimisation over polling, a client that cannot reach it must still
+    # work, and nothing in this package has ever observed the stream -- the
+    # sandbox refuses that host and the live token was not risked.
+    order_updates: bool = False
 
 
 def submission_refusal(

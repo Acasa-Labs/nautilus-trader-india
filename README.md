@@ -24,6 +24,7 @@ Not a fork.
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
 > | **The order path has never run against production** | The client has been driven end to end against Dhan's [sandbox](https://sandbox.dhan.co/v2/) — placing, modifying, cancelling, looking an order up by client order id, and resting a forever order — but never on a live account, which needs a whitelisted static IP the machine this was written on does not have. The sandbox is not a faithful mirror (`GET /v2/holdings` answers `200 []` there and `500` in production), so it raises confidence without settling it. |
 > | **No order has ever filled** | The sandbox has no matching engine: orders rest at `PENDING` for ever, whatever the price. So `generate_fill_reports` and `generate_position_status_reports` have never produced a report from real data, and every fixture behind them is Dhan's documentation. This is the largest untested surface in the package. See [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md). |
+> | **The order-update stream is unobserved** | `order_updates=True` subscribes to `wss://api-order-update.dhan.co` so a fill is reported when it happens rather than at the next reconciliation. It is **off by default**: the socket refuses sandbox credentials, so not one real frame has ever been parsed. When it drops, the client says so loudly and marks itself disconnected — a stream that dies quietly leaves an engine that looks healthy and learns nothing. |
 > | **Client order ids are hashed, not passed through** | Dhan's `correlationId` accepts 25 characters — measured; the docs say 30 — and a default Nautilus `ClientOrderId` is 27, so it cannot fit. Anything too long is sent as an 18-character `blake2s` digest, which is deterministic and maps back by recomputation. The id in Dhan's own order book is therefore **not human-readable**. |
 > | A `MARKET` order does not fill at the market | Dhan converts an API `MARKET` order into a limit order with **market-protection pricing**, so it fills at a limit neither you nor this adapter chose. The order is sent as asked and the adapter logs a warning when it does. Send a `LIMIT` order to name your own price. |
 > | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
@@ -43,7 +44,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | **shipped**, 177 tests. Orders, super orders and forever orders. Exercised against Dhan's **sandbox**; **never run against a live account.** |
+| `nautilus_india.dhan` — execution | **shipped**, 215 tests. Orders, super orders, forever orders and the order-update stream. Exercised against Dhan's **sandbox**; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus

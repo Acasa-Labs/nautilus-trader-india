@@ -35,6 +35,7 @@ GENERATORS = (
     "generate_order_denied", "generate_order_rejected", "generate_order_submitted",
     "generate_order_accepted", "generate_order_canceled", "generate_order_updated",
     "generate_order_cancel_rejected", "generate_order_modify_rejected",
+    "generate_order_filled", "generate_order_expired",
 )
 
 
@@ -1164,3 +1165,148 @@ async def test_an_auth_failure_on_that_lookup_still_raises(nifty_option, live_en
         await client.generate_order_status_report(GenerateOrderStatusReport(
             instrument_id=nifty_option.id, client_order_id=ClientOrderId("nti-1"),
             venue_order_id=None, command_id=UUID4(), ts_init=0))
+
+
+# -- the order-update stream -------------------------------------------------
+
+
+
+def _alert(**overrides):
+    body = json.loads(json.dumps(corpus.body("order_update_message")))
+    body["Data"].update({"SecurityId": "43492", "Exchange": "NSE", "Segment": "D",
+                         "Quantity": 65, "RemainingQuantity": 65, "TradedQty": 0})
+    body["Data"].update(overrides)
+    return body
+
+
+async def test_an_accepted_update_is_reported_as_accepted(
+    nifty_option, live_env, recorded
+):
+    client = await _client(_acknowledging(), nifty_option)
+    ours = ClientOrderId("nti-1")
+    client._cache.add_order(_order(nifty_option, ours.value), position_id=None)
+    await client._handle_order_update(
+        _alert(Status="Pending", CorrelationId="nti-1", OrderNo="99"))
+    assert _names(recorded) == ["generate_order_accepted"]
+
+
+async def test_a_cancelled_update_is_reported_as_cancelled(
+    nifty_option, live_env, recorded
+):
+    client = await _client(_acknowledging(), nifty_option)
+    client._cache.add_order(_order(nifty_option, "nti-1"), position_id=None)
+    await client._handle_order_update(
+        _alert(Status="Cancelled", CorrelationId="nti-1", OrderNo="99"))
+    assert _names(recorded) == ["generate_order_canceled"]
+
+
+async def test_a_rejected_update_carries_the_venue_s_reason(
+    nifty_option, live_env, recorded
+):
+    client = await _client(_acknowledging(), nifty_option)
+    client._cache.add_order(_order(nifty_option, "nti-1"), position_id=None)
+    await client._handle_order_update(_alert(
+        Status="Rejected", CorrelationId="nti-1", OrderNo="99",
+        ReasonDescription="RMS:Margin Exceeds"))
+    assert _names(recorded) == ["generate_order_rejected"]
+    assert "Margin Exceeds" in recorded[0][1]["reason"]
+
+
+async def test_an_update_for_an_order_that_is_not_ours_emits_nothing(
+    nifty_option, live_env, recorded
+):
+    """Dhan streams every order on the account, "irrespective of the platform
+    via which it was placed". One from their mobile app is not ours, and
+    emitting an event for it would attach a stranger's order to our engine."""
+    client = await _client(_acknowledging(), nifty_option)
+    await client._handle_order_update(
+        _alert(Status="Cancelled", CorrelationId="", OrderNo="99"))
+    assert _names(recorded) == []
+
+
+async def test_a_traded_update_fetches_the_real_fill(
+    nifty_option, live_env, recorded
+):
+    """The socket says how much filled and at what average, but carries NO
+    per-fill id. Emitting a fill from it would put a fabricated trade id into
+    reconciliation, so a fill on the stream is a signal to go and ask
+    GET /v2/trades/{orderId}, which does carry `exchangeTradeId`."""
+    asked = []
+
+    async def handler(request):
+        asked.append(request.url.path)
+        return httpx.Response(200, json=[_row("trade_book_row", tradedQuantity=65,
+                                              orderId="99")])
+
+    client = await _client(handler, nifty_option)
+    client._cache.add_order(_order(nifty_option, "nti-1"), position_id=None)
+    await client._handle_order_update(_alert(
+        Status="Traded", CorrelationId="nti-1", OrderNo="99", TradedQty=65,
+        AvgTradedPrice=100.25))
+    assert asked == ["/v2/trades/99"], asked
+    assert "generate_order_filled" in _names(recorded)
+
+
+async def test_a_traded_update_whose_fill_lookup_fails_emits_no_fill(
+    nifty_option, live_env, recorded
+):
+    """A fill we cannot describe is not a fill we may invent. The stream told
+    us something happened; without the trade id we say so in the log and let
+    reconciliation carry it."""
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = await _client(handler, nifty_option)
+    client._cache.add_order(_order(nifty_option, "nti-1"), position_id=None)
+    await client._handle_order_update(_alert(
+        Status="Traded", CorrelationId="nti-1", OrderNo="99", TradedQty=65))
+    assert "generate_order_filled" not in _names(recorded)
+
+
+async def test_a_frame_that_is_not_an_order_alert_is_ignored(
+    nifty_option, live_env, recorded
+):
+    client = await _client(_acknowledging(), nifty_option)
+    await client._handle_order_update({"Type": "heartbeat"})
+    assert _names(recorded) == []
+
+
+async def test_a_frame_with_an_unmappable_status_does_not_kill_the_stream(
+    nifty_option, live_env, recorded
+):
+    """One bad frame must not end the connection: every later update for
+    every order would be lost, and the engine would go quiet without saying
+    so. It is logged and skipped."""
+    client = await _client(_acknowledging(), nifty_option)
+    await client._handle_order_update(_alert(Status="Sideways", OrderNo="99"))
+    assert _names(recorded) == []
+
+
+async def test_the_stream_is_not_started_unless_it_is_asked_for(
+    nifty_option, live_env
+):
+    """Off by default. The stream is an optimisation over polling, and a
+    client that cannot reach it must still work -- so enabling it is a
+    decision, not a surprise."""
+    client = await _client(_acknowledging(), nifty_option)
+    assert client._config.order_updates is False
+    assert client._order_update_task is None
+
+
+async def test_a_lost_stream_is_logged_as_a_gap_not_a_silence(
+    nifty_option, live_env, caplog
+):
+    """The dangerous failure is a socket that dies quietly: the engine keeps
+    running, learns nothing, and looks healthy. A drop has to be loud, and the
+    client has to fall back on reconciliation rather than assume."""
+    client = await _client(_acknowledging(), nifty_option)
+    client._on_stream_lost(RuntimeError("connection reset"))
+    assert client.order_updates_connected is False
+
+
+async def test_the_auth_frame_never_reaches_a_log(nifty_option, live_env):
+    """It carries the access token."""
+    from nautilus_india.dhan import order_updates
+
+    redacted = order_updates.redacted_auth_message("CLIENT1", "super-secret")
+    assert "super-secret" not in redacted

@@ -61,6 +61,7 @@ from nautilus_trader.model.enums import (
     AccountType,
     OmsType,
     OrderSide,
+    OrderStatus,
     OrderType,
     TimeInForce,
 )
@@ -73,7 +74,7 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.orders import Order
 
-from nautilus_india.dhan import forever_orders, super_orders
+from nautilus_india.dhan import forever_orders, order_updates, super_orders
 from nautilus_india.dhan.auth import from_env
 from nautilus_india.dhan.config import DhanExecClientConfig, submission_refusal
 from nautilus_india.dhan.constants import (
@@ -83,6 +84,7 @@ from nautilus_india.dhan.constants import (
     LEG_TARGET,
     ORDER_SLICING_PATH,
     ORDER_TYPE_LIMIT,
+    ORDER_UPDATE_WSS,
     ORDERS_EXTERNAL_PATH,
     ORDERS_PATH,
     POSITIONS_PATH,
@@ -160,6 +162,11 @@ class DhanExecutionClient(LiveExecutionClient):
         # Set once an IP failure is seen, and never cleared: nothing in this
         # process can whitelist an address, so a retry can only fail again.
         self.is_degraded_by_ip = False
+        # The order-update stream, when it is asked for. `connected` is the
+        # thing an operator needs: a socket that dies quietly leaves the engine
+        # running, learning nothing, and looking healthy.
+        self._order_update_task: asyncio.Task | None = None
+        self.order_updates_connected = False
         self._set_account_id(AccountId(f"{name}-{self._dhan_client_id or 'UNSET'}"))
 
     # -- lifecycle -------------------------------------------------------
@@ -177,8 +184,31 @@ class DhanExecutionClient(LiveExecutionClient):
         self._set_account_id(AccountId(f"{self.id.value}-{client_id}"))
         self._http = DhanHttpClient(client_id, token, base_url=self._config.base_url)
         await self._instrument_provider.initialize()
+        if self._config.order_updates:
+            self._order_update_task = self._loop.create_task(
+                self._run_order_update_stream(token)
+            )
+
+    def _on_stream_lost(self, exc: BaseException) -> None:
+        """The order-update stream is gone, and that has to be LOUD.
+
+        The dangerous failure here is silence: the socket dies, the engine
+        keeps running, learns nothing, and every health check still passes.
+        Marking it disconnected is what lets a caller fall back on
+        `generate_order_status_reports` rather than assume nothing happened.
+        """
+        self.order_updates_connected = False
+        self._log.error(
+            f"the Dhan order-update stream is DOWN ({exc}). Fills and status "
+            "changes will NOT arrive until it is back; they are still visible "
+            "to reconciliation, which is now the only thing that will see them."
+        )
 
     async def _disconnect(self) -> None:
+        if self._order_update_task is not None:
+            self._order_update_task.cancel()
+            self._order_update_task = None
+            self.order_updates_connected = False
         if self._http is not None:
             await self._http.aclose()
             self._http = None
@@ -882,3 +912,156 @@ class DhanExecutionClient(LiveExecutionClient):
             self.account_id,
             self._clock.timestamp_ns(),
         )
+
+    # -- the order-update stream -----------------------------------------
+    #
+    # Without it a fill is learned at the next reconciliation rather than when
+    # it happens, and that gap is the window in which a strategy acts on a
+    # position it does not yet know it holds.
+    #
+    # THE STREAM CARRIES THE WHOLE ACCOUNT. Dhan's words: order updates arrive
+    # "irrespective of the platform via which it was placed". An order from
+    # their mobile app is not ours, and emitting an event for one would attach
+    # a stranger's order to this engine -- so an update that maps to none of
+    # our client order ids is dropped.
+    #
+    # A FILL ON THE STREAM IS NOT A FILL REPORT. The message says how much
+    # filled and at what average and carries NO per-fill id, so it is a signal
+    # to go and ask GET /v2/trades/{orderId}, which does carry
+    # `exchangeTradeId`. Inventing one here would put a fabricated trade into
+    # a reconciliation.
+
+    async def _handle_order_update(self, message: dict) -> None:
+        """One frame from the order-update socket.
+
+        Never raises. One bad frame must not end the stream: every later
+        update for every order would be lost, and the engine would go quiet
+        without saying so.
+        """
+        try:
+            update = order_updates.parse(message)
+        except ValueError as exc:
+            self._log.error(f"unreadable order update, skipped: {exc}")
+            return
+        if update is None:
+            return  # a heartbeat, or something else that is not an order
+
+        client_order_id = update.client_order_id_for(self._known_client_order_ids())
+        if client_order_id is None:
+            self._log.debug(
+                f"order update for {update.venue_order_id} is not ours "
+                "(correlationId matches no order this session placed); ignored"
+            )
+            return
+        order = self._cache.order(client_order_id)
+        if order is None:
+            return
+        ts = self._clock.timestamp_ns()
+
+        if update.order_status is OrderStatus.ACCEPTED:
+            self.generate_order_accepted(
+                strategy_id=order.strategy_id, instrument_id=order.instrument_id,
+                client_order_id=client_order_id,
+                venue_order_id=update.venue_order_id, ts_event=ts)
+        elif update.order_status is OrderStatus.CANCELED:
+            self.generate_order_canceled(
+                strategy_id=order.strategy_id, instrument_id=order.instrument_id,
+                client_order_id=client_order_id,
+                venue_order_id=update.venue_order_id, ts_event=ts)
+        elif update.order_status is OrderStatus.REJECTED:
+            self.generate_order_rejected(
+                strategy_id=order.strategy_id, instrument_id=order.instrument_id,
+                client_order_id=client_order_id,
+                reason=update.reason or "rejected by the venue", ts_event=ts)
+        elif update.order_status is OrderStatus.EXPIRED:
+            self.generate_order_expired(
+                strategy_id=order.strategy_id, instrument_id=order.instrument_id,
+                client_order_id=client_order_id,
+                venue_order_id=update.venue_order_id, ts_event=ts)
+        elif update.order_status in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+            await self._emit_fills_for(order, update)
+
+    async def _emit_fills_for(self, order, update) -> None:
+        """Ask Dhan what actually filled, and report that rather than the
+        stream's summary."""
+        instrument = self._cache.instrument(order.instrument_id)
+        if instrument is None:
+            return
+        try:
+            body = await self._http.get(f"{TRADES_PATH}/{update.venue_order_id.value}")
+        except DhanError as exc:
+            # A fill we cannot describe is not a fill we may invent. The
+            # stream said something happened; reconciliation carries it.
+            self._log.error(
+                f"{order.client_order_id} filled on the order-update stream but "
+                f"its trades could not be read ({exc}). NO FILL EMITTED; it will "
+                "be picked up by reconciliation."
+            )
+            return
+        rows = body if isinstance(body, list) else [body]
+        for report in self._reports_from(rows, fill_report):
+            self.generate_order_filled(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                venue_order_id=report.venue_order_id,
+                venue_position_id=None,
+                trade_id=report.trade_id,
+                order_side=report.order_side,
+                order_type=order.order_type,
+                last_qty=report.last_qty,
+                last_px=report.last_px,
+                quote_currency=instrument.quote_currency,
+                commission=report.commission,
+                liquidity_side=report.liquidity_side,
+                ts_event=report.ts_event,
+            )
+
+    async def _run_order_update_stream(self, token: str) -> None:
+        """Hold the order-update socket open and feed every frame to the
+        handler.
+
+        RECONNECTS, AND SAYS SO BOTH WAYS. A stream that reconnects silently
+        hides how long it was down, and the gap is exactly the interval in
+        which a fill was missed -- so a drop and a recovery are both errors in
+        the log, and `order_updates_connected` is the flag a caller reads.
+
+        NEVER RAISES OUT OF THE TASK. An exception here would end the task and
+        take the stream with it for the rest of the session.
+        """
+        import json as _json
+
+        import websockets
+
+        backoff = 1
+        while True:
+            try:
+                async with websockets.connect(ORDER_UPDATE_WSS) as socket:
+                    await socket.send(
+                        _json.dumps(order_updates.auth_message(self._dhan_client_id, token))
+                    )
+                    self.order_updates_connected = True
+                    backoff = 1
+                    self._log.info(
+                        "order-update stream connected: "
+                        f"{order_updates.redacted_auth_message(self._dhan_client_id, token)}"
+                    )
+                    async for raw in socket:
+                        try:
+                            frame = _json.loads(
+                                raw.decode() if isinstance(raw, bytes) else raw
+                            )
+                        except ValueError:
+                            self._log.error(
+                                f"order-update frame is not JSON, skipped: {raw!r:.200}"
+                            )
+                            continue
+                        await self._handle_order_update(frame)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the task must survive anything
+                self._on_stream_lost(exc)
+                await asyncio.sleep(backoff)
+                # Capped, because a tight reconnect loop against a venue that
+                # is refusing us is its own kind of outage.
+                backoff = min(backoff * 2, 30)
