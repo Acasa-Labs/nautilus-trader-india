@@ -1,12 +1,14 @@
 [project]
 name = "nautilus-trader-india"
 version = "0.1.0"
-description = "ALPHA. NautilusTrader adapters for Zerodha Kite and Dhan (NSE, BSE, MCX)"
+description = "ALPHA. A NautilusTrader adapter for Dhan (NSE, BSE, MCX). Zerodha Kite is planned and not yet started."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.15"
 authors = [{ name = "Acasa Labs" }]
-keywords = ["nautilus_trader", "trading", "zerodha", "kite", "dhan", "nse", "bse", "mcx"]
+# `kite` is deliberately absent: the Kite adapter is not started, and a
+# keyword is a promise to whoever is searching for one.
+keywords = ["nautilus_trader", "trading", "dhan", "nse", "bse", "mcx", "india"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",

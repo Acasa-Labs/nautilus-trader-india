@@ -2,7 +2,7 @@
   "endpoint": "POST /v2/orders",
   "http_status": 400,
   "provenance": "recorded-elsewhere",
-  "source": "a private repository's Dhan vendor notes, probed against a live account 2026-09-08. Real response, transcribed verbatim from that record; this repository cannot re-observe it, because the write path needs a whitelisted static IP the probing machine does not have. Section 'Error codes are not diagnostic'.",
+  "source": "recorded during a probe of the live account on 2026-09-08, in a private repository that is not published here. Real response, transcribed verbatim from that record; this repository cannot re-observe it, because the write path needs a whitelisted static IP the probing machine does not have. Section on error codes not being diagnostic.",
   "why_it_matters": "The order path's hard stop. Note the code is DH-905, the SAME code returned for 'quantity is required' below -- so an IP failure can only be told apart by its MESSAGE.",
   "body": {
     "errorType": "Input_Exception",

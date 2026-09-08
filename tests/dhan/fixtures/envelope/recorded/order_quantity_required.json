@@ -2,7 +2,7 @@
   "endpoint": "POST /v2/orders",
   "http_status": 400,
   "provenance": "recorded-elsewhere",
-  "source": "a private repository's Dhan vendor notes, probed against a live account 2026-09-08. Real response, transcribed verbatim from that record; this repository cannot re-observe it, because the write path needs a whitelisted static IP the probing machine does not have. Section 'Error codes are not diagnostic'.",
+  "source": "recorded during a probe of the live account on 2026-09-08, in a private repository that is not published here. Real response, transcribed verbatim from that record; this repository cannot re-observe it, because the write path needs a whitelisted static IP the probing machine does not have. Section on error codes not being diagnostic.",
   "why_it_matters": "Returned minutes apart from 'Invalid IP' on the same endpoint with the same DH-905. This pair is the whole reason DH-905 cannot be treated as an IP code.",
   "body": {
     "errorType": "Input_Exception",

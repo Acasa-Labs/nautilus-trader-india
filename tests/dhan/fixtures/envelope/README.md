@@ -45,11 +45,12 @@ sentinel that parses to a negative timestamp Nautilus accepts in silence.
 
 ### `recorded/` — real bodies, observed elsewhere
 
-Write-path responses transcribed verbatim from a probe session recorded in
-`a private repository's Dhan vendor notes` (2026-09-08). Real, but **this
-repository cannot re-observe them**: placing an order needs a whitelisted
-static IP, and the machine holding these credentials has a dynamic residential
-IPv6 prefix. Each file names the record it came from.
+Write-path responses transcribed verbatim from a probe of the live account on
+2026-09-08, recorded in a private repository that is not published here. Real,
+but **this repository cannot re-observe them**: placing an order needs a
+whitelisted static IP, and the machine holding those credentials has a dynamic
+residential address. Each file says what it came from and why it cannot be
+re-captured.
 
 ### `documented/` — Dhan's published specification
 

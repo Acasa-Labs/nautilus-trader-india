@@ -1,6 +1,8 @@
 # nautilus-trader-india
 
-NautilusTrader adapters for **Zerodha Kite** and **Dhan** — NSE, BSE and MCX.
+A NautilusTrader adapter for **Dhan** — NSE, BSE and MCX. A **Zerodha Kite**
+adapter is the point of the shared core and is *not started*; if that is what
+you came for, there is nothing here for you yet.
 
 An independent MIT package that installs alongside upstream `nautilus-trader`.
 Not a fork.
@@ -75,7 +77,10 @@ node.add_data_client_factory("DHAN", DhanLiveDataClientFactory)
 ```
 
 See [`examples/dhan_market_data.py`](examples/dhan_market_data.py) for a
-runnable node.
+runnable node, and [`examples/dhan_execution.py`](examples/dhan_execution.py)
+for the order path. **Run the second one without `--live` first**: it will be
+denied, and the denial names both switches, which is the fastest way to watch
+the gate work before trusting it with money.
 
 Execution registers the same way, and registering it does **not** arm it:
 

@@ -7,8 +7,9 @@
 THIS OPENS A REAL SOCKET and downloads a 32 MB instrument master, so CI does
 not run it. Everything it exercises has unit tests that open nothing.
 
-It places no orders. Plan 2 ships no execution client at all -- see
-CLAUDE.md on the two switches that will gate one when it lands.
+It places no orders: `exec_clients` is empty, so nothing here can send one.
+For the order path see `dhan_execution.py`, which is gated behind the two
+switches CLAUDE.md describes.
 """
 
 from __future__ import annotations

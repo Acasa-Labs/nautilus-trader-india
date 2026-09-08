@@ -2,7 +2,7 @@
   "endpoint": "POST /v2/RenewToken",
   "http_status": 401,
   "provenance": "recorded-elsewhere",
-  "source": "a private repository's token-renewal test -- 'what a renewal with an already-dead token actually returns'. NOT re-observable here: renewing rotates a token a live session is authenticated with. The HTTP status is not recorded there; 401 is this file's own assumption and nothing keys on it.",
+  "source": "recorded during a probe of the live account, in a private repository that is not published here -- a test pinning what a token renewal with an already-dead token actually returns. NOT re-observable here: renewing rotates a token a live session is authenticated with. The HTTP status is not recorded there; 401 is this file's own assumption and nothing keys on it.",
   "why_it_matters": "An expired token produces an ordinary error body. A client that read it as a venue rejection would report every order dead once its token aged out, mid-session, on the 24-hour boundary.",
   "body": {
     "errorType": "Order_Error",
