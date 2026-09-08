@@ -22,10 +22,11 @@ Not a fork.
 > | Margin is per-instrument, not per-portfolio | A multi-leg short is **over**-charged ~1.66×. Safe for sizing, wrong for research — it can veto trades the exchange would have allowed. |
 > | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
->
-> No execution client exists yet, for either broker — this package cannot
-> place an order at all today. When one lands, live order submission will be
-> gated behind two switches (see below), and that gate is not a formality.
+> | **The order path has never run** | No order has ever been placed with this code. Placing one needs a whitelisted static IP, and the machine these adapters were written on has a dynamic residential address, so `POST /v2/orders` has never been reached. Every order-path fixture is Dhan's *documentation* rather than a captured response, and is marked as such in `tests/dhan/fixtures/envelope/`. |
+> | LIMIT orders only | Dhan converts an API `MARKET` order into a limit order with market-protection pricing. Rather than fill you at a price you did not choose and cannot see, this adapter **refuses** a market order. Stop and stop-limit orders are not implemented. |
+> | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
+> | Fills arrive by polling, not by socket | `generate_fill_reports` reads `GET /v2/trades`. Dhan's order-update WebSocket is not wired up yet, so a fill is seen at the next reconciliation rather than the instant it happens. |
+> | Commission is reported as zero | Dhan does not send one: `GET /v2/trades` carries no charge and the margin calculator returns `brokerage: 0.0`. `core.fees` models the charge; putting that estimate into a broker record would launder our own number as the venue's. |
 >
 > **The API will change without deprecation before 1.0.** Pin an exact version.
 >
@@ -40,7 +41,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | not started |
+| `nautilus_india.dhan` — execution | **shipped**, 84 tests. **Never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
@@ -72,6 +73,30 @@ node.add_data_client_factory("DHAN", DhanLiveDataClientFactory)
 
 See [`examples/dhan_market_data.py`](examples/dhan_market_data.py) for a
 runnable node.
+
+Execution registers the same way, and registering it does **not** arm it:
+
+```python
+from nautilus_india.dhan import DhanExecClientConfig, DhanLiveExecClientFactory
+
+node.add_exec_client_factory("DHAN", DhanLiveExecClientFactory)
+# and in the node config:
+#     exec_clients={"DHAN": DhanExecClientConfig(live_orders=True)}
+# and in the environment:
+#     NAUTILUS_INDIA_LIVE_ORDERS=1
+```
+
+**Both switches, always.** With either one missing every order is denied
+before anything is sent — which is the point: a stray import cannot set an
+environment variable, and a stray environment variable cannot construct a
+client. A config nobody edited reads, reports and sends nothing.
+
+**An order whose fate is unknown produces no event.** A submission that
+times out, is reset, or comes back unreadable may be working at the
+exchange, so the adapter says nothing and leaves it to
+`generate_order_status_reports`. It never reports such an order rejected:
+that would tell the engine an order is dead while it is live, and the
+position that follows is one nobody chose.
 
 **Known gap:** Dhan publishes no market-feed segment code for NSE commodity,
 so its 23,870 `OPTFUT` contracts are listed but not subscribable. Dhan's own
