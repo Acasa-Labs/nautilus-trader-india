@@ -1,4 +1,18 @@
-"""Dhan answers HTTP 200 for failures, so the BODY is the only evidence."""
+"""Dhan answers HTTP 200 for failures, so the BODY is the only evidence.
+
+!!! THE ENVELOPE TESTS BELOW ARE WRONG AND PASS ANYWAY !!!
+
+Everything asserting `{"status": "success", "data": ...}` or
+`remarks.error_code` / `remarks.error_message` describes a shape no Dhan v2
+endpoint returns, measured 2026-09-08. They are marked xfail so a green run
+stops vouching for them: pytest reports them as XPASS, which is the point --
+they agree with the implementation and both are wrong together. Being
+rebuilt against a captured corpus. See the banner in
+`nautilus_india/dhan/errors.py`.
+
+The `Ambiguous` tests at the bottom are NOT marked: the transport split they
+pin is correct and survives the rebuild.
+"""
 
 import pytest
 
@@ -11,11 +25,18 @@ from nautilus_india.dhan.errors import (
     classify,
 )
 
+BROKEN_ENVELOPE = pytest.mark.xfail(
+    reason="asserts an envelope no Dhan v2 endpoint returns; see the module docstring",
+    strict=False,
+)
 
+
+@BROKEN_ENVELOPE
 def test_a_success_body_yields_its_data():
     assert classify({"status": "success", "data": {"orderId": "123"}}) == {"orderId": "123"}
 
 
+@BROKEN_ENVELOPE
 def test_a_success_body_with_no_data_yields_an_empty_dict():
     """An unknown securityId returns 200 with empty arrays, byte-identical
     to a holiday. Empty is a legitimate answer, not an error."""
@@ -23,6 +44,7 @@ def test_a_success_body_with_no_data_yields_an_empty_dict():
     assert classify({"status": "success", "data": None}) == {}
 
 
+@BROKEN_ENVELOPE
 def test_a_rejection_names_its_reason_and_code():
     with pytest.raises(OrderRejected) as exc:
         classify({
@@ -33,6 +55,7 @@ def test_a_rejection_names_its_reason_and_code():
     assert exc.value.code == "DH-901"
 
 
+@BROKEN_ENVELOPE
 def test_remarks_may_be_a_bare_string_and_the_message_survives():
     """Some endpoints return a bare string. A dict-only reader reports every
     one of those as 'unspecified failure' and throws away the only
@@ -42,6 +65,7 @@ def test_remarks_may_be_a_bare_string_and_the_message_survives():
 
 
 @pytest.mark.parametrize("code", ["DH-905", "DH-808"])
+@BROKEN_ENVELOPE
 def test_an_ip_code_degrades_the_whole_client(code):
     """Every subsequent order fails identically, so retrying is 250 useless
     requests a minute. This is not a per-order failure."""
@@ -53,6 +77,7 @@ def test_an_ip_code_degrades_the_whole_client(code):
     "message",
     ["Invalid IP", "ip not whitelisted", "Your IP is NOT WHITELISTED for this account"],
 )
+@BROKEN_ENVELOPE
 def test_an_ip_message_is_recognised_even_without_a_known_code(message):
     """Dhan has returned this as prose. Matching only on the code would
     report it as an ordinary rejection and retry forever."""
@@ -60,16 +85,19 @@ def test_an_ip_message_is_recognised_even_without_a_known_code(message):
         classify({"status": "failed", "remarks": {"error_message": message}})
 
 
+@BROKEN_ENVELOPE
 def test_a_rate_limit_is_the_only_retryable_outcome():
     with pytest.raises(RateLimited):
         classify({"status": "failed", "remarks": {"error_code": "DH-904", "error_message": "x"}})
 
 
+@BROKEN_ENVELOPE
 def test_an_unrecognised_failure_is_still_a_rejection_not_a_guess():
     with pytest.raises(OrderRejected, match="unspecified failure"):
         classify({"status": "failed"})
 
 
+@BROKEN_ENVELOPE
 def test_a_non_dict_body_is_a_transport_error():
     with pytest.raises(TransportError):
         classify(["not", "an", "object"])

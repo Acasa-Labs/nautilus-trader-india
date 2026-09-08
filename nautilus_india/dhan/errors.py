@@ -1,5 +1,35 @@
 """The Dhan error taxonomy, and the one place a response body is interpreted.
 
+!!! BROKEN — `classify` PARSES AN ENVELOPE NO DHAN v2 ENDPOINT RETURNS !!!
+
+    Measured 2026-09-08 against a live account; see the "The response
+    envelope" section of the Dhan vendor notes. Every rule below about
+    `status: "success"`, `remarks.error_code` and `remarks.error_message`
+    was ported from another repository and never checked against a real
+    body. Real bodies are bare objects, bare arrays, or
+    `{errorType, errorCode, errorMessage}` — and `/v2/ip/getIP` returns an
+    error INSIDE a bare array at HTTP 200.
+
+    Two consequences, both observed:
+
+      * A SUCCESSFUL ORDER READS AS A REJECTION. Dhan's documented success
+        body for POST /v2/orders is `{"orderId": ..., "orderStatus":
+        "PENDING"}`; `body.get("status") == "success"` is False for it, so
+        this raises OrderRejected("unspecified failure"). Two orders were
+        accepted at the exchange while the caller recorded two rejections,
+        zero fills and an empty position book.
+      * `IPNotWhitelisted` IS UNREACHABLE. The real fields are top-level
+        `errorCode`/`errorMessage`, not `remarks.*`, so every error degrades
+        to OrderRejected and the session continues into the retry loop this
+        exception exists to stop. `DH-905` is not an IP code either — it is
+        the generic Input_Exception, returned for "quantity is required"
+        and for "Invalid IP" alike.
+
+    DO NOT TRUST A GREEN TEST RUN HERE. The tests in tests/dhan/test_errors.py
+    that assert the envelope are marked xfail for exactly this reason: they
+    pass against the wrong shape. Being rebuilt from a captured corpus.
+
+
 DHAN ANSWERS 200 FOR FAILURES. An unknown `securityId` returns 200 with empty
 arrays, byte-identical to a holiday, and a 4xx sometimes carries the same
 shaped body. So nothing here reads a status code. The body is the only
@@ -83,6 +113,10 @@ _IP_PHRASES = ("invalid ip", "ip not whitelisted", "not whitelisted")
 
 def classify(body: Any) -> dict[str, Any]:
     """Return `data` on success; raise the right error otherwise.
+
+    BROKEN: the envelope read below is one no Dhan v2 endpoint returns, so a
+    successful order reads as a rejection and `IPNotWhitelisted` cannot be
+    raised at all. See the module docstring. Do not build on this.
 
     Never raises the no-answer case -- see the module docstring.
     """

@@ -6,6 +6,10 @@ unknown securityId returns 200 with empty arrays, byte-identical to a holiday
 either way and handed to `classify`. No `raise_for_status`: a 4xx still
 carries the reason, and raising on the code throws it away.
 
+BROKEN, downstream of `errors.classify`: it parses an envelope no Dhan v2
+endpoint returns, so every body this module hands it is misread. See the
+banner in `nautilus_india/dhan/errors.py`.
+
 READS AND WRITES FAIL DIFFERENTLY, and this is the point of the module. A GET
 changes nothing, so a GET that times out is just a failed read. A POST may
 have reached the venue, so a POST that times out is ambiguous and the caller
