@@ -1,0 +1,21 @@
+{
+  "endpoint": "POST /v2/optionchain/expirylist",
+  "http_status": 400,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:39:03+05:30",
+  "source": "live read-only fetch from nautilus-trader-india",
+  "request_that_produced_it": {
+    "UnderlyingScrip": 99999999,
+    "UnderlyingSeg": "IDX_I"
+  },
+  "why_it_matters": "THE SHAPE THAT BREAKS THE PROPOSED RULE. The vendor notes conclude 'an error is a body carrying errorMessage, or status:\"ERROR\"'. This body carries NEITHER: it is `status: \"failed\"` with the message hidden under `data` as a {code: message} map. That rule would read this as a success and hand the caller `{\"813\": \"Invalid SecurityId\"}` as data. Three different malformed requests -- unknown underlying, bad segment, and a missing required field -- all produced this identical body, so it does not say what was wrong either.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "data": {
+      "813": "Invalid SecurityId"
+    },
+    "status": "failed"
+  }
+}

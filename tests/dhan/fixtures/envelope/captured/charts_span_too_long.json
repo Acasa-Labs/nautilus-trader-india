@@ -1,0 +1,25 @@
+{
+  "endpoint": "POST /v2/charts/intraday",
+  "http_status": 400,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:39:43+05:30",
+  "source": "live read-only fetch from nautilus-trader-india",
+  "request_that_produced_it": {
+    "securityId": "13",
+    "exchangeSegment": "IDX_I",
+    "instrument": "INDEX",
+    "interval": "1",
+    "oi": false,
+    "fromDate": "2026-01-01",
+    "toDate": "2026-09-04"
+  },
+  "why_it_matters": "A THIRD distinct message under DH-905, after 'Invalid IP' and 'quantity is required'. Whatever doubt remained about keying on the code rather than the message, this removes.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "errorType": "Input_Exception",
+    "errorCode": "DH-905",
+    "errorMessage": "Data for Intraday Charts can be fetched for 90 days at a time"
+  }
+}

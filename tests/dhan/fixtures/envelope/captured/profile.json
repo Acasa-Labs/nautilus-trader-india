@@ -1,0 +1,19 @@
+{
+  "endpoint": "GET /v2/profile",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:32:51+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "dhanClientId": "SCRUBBED_CLIENT_ID",
+    "tokenValidity": "09/09/2026 08:00",
+    "activeSegment": "E, D, C, M, ",
+    "ddpi": "Deactive",
+    "mtf": "Deactive",
+    "dataPlan": "Active",
+    "dataValidity": "2026-09-29 17:52:44.0"
+  }
+}

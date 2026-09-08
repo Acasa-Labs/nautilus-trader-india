@@ -6,9 +6,11 @@ unknown securityId returns 200 with empty arrays, byte-identical to a holiday
 either way and handed to `classify`. No `raise_for_status`: a 4xx still
 carries the reason, and raising on the code throws it away.
 
-BROKEN, downstream of `errors.classify`: it parses an envelope no Dhan v2
-endpoint returns, so every body this module hands it is misread. See the
-banner in `nautilus_india/dhan/errors.py`.
+WHAT COMES BACK IS NOT ALWAYS AN OBJECT. `/v2/orders`, `/v2/positions`,
+`/v2/trades` and `/v2/super/orders` answer with a bare ARRAY, so these methods
+return `Any` and not `dict`. An earlier annotation said `dict` and was wrong
+for four of the endpoints this client exists to call -- a claim no runtime
+test can catch, which is why it is stated here.
 
 READS AND WRITES FAIL DIFFERENTLY, and this is the point of the module. A GET
 changes nothing, so a GET that times out is just a failed read. A POST may
@@ -63,7 +65,7 @@ class DhanHttpClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def get(self, path: str, params: dict | None = None) -> dict[str, Any]:
+    async def get(self, path: str, params: dict | None = None) -> Any:
         """A read. Failure is a failed read, never an ambiguity."""
         try:
             response = await self._client.get(
@@ -73,7 +75,7 @@ class DhanHttpClient:
             raise TransportError(f"GET {path} failed: {exc}") from exc
         return self._answer(response, path, ambiguous_on_failure=False)
 
-    async def post(self, path: str, payload: dict) -> dict[str, Any]:
+    async def post(self, path: str, payload: dict) -> Any:
         """A write. Failure without a body is ambiguous, never a rejection."""
         try:
             response = await self._client.post(
@@ -89,7 +91,7 @@ class DhanHttpClient:
 
     def _answer(
         self, response: httpx.Response, path: str, *, ambiguous_on_failure: bool
-    ) -> dict[str, Any]:
+    ) -> Any:
         try:
             body = response.json()
         except ValueError as exc:

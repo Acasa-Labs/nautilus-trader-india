@@ -1,10 +1,23 @@
-"""The HTTP seam. Driven through httpx.MockTransport; no socket is opened."""
+"""The HTTP seam. Driven through httpx.MockTransport; no socket is opened.
+
+The bodies come from the captured corpus rather than from literals, so this
+file cannot drift back to asserting a shape nobody has seen. What it adds on
+top of `test_errors.py` is the TRANSPORT half of the split: what happens when
+there is no body to classify at all.
+"""
 
 import httpx
 import pytest
 
-from nautilus_india.dhan.errors import Ambiguous, IPNotWhitelisted, OrderRejected, TransportError
+from nautilus_india.dhan.errors import (
+    Ambiguous,
+    DhanApiError,
+    DhanError,
+    IPNotWhitelisted,
+    TransportError,
+)
 from nautilus_india.dhan.http import DhanHttpClient
+from tests.dhan import corpus
 
 
 def _client(handler) -> DhanHttpClient:
@@ -14,11 +27,33 @@ def _client(handler) -> DhanHttpClient:
     )
 
 
-async def test_a_success_body_returns_its_data():
-    async def handler(request):
-        return httpx.Response(200, json={"status": "success", "data": {"orderId": "42"}})
+def _answering(name: str):
+    """A handler replying with one captured body, at the status it arrived on."""
+    fx = corpus.fixture(name)
 
-    assert await _client(handler).post("/v2/orders", {}) == {"orderId": "42"}
+    async def handler(request):
+        return httpx.Response(fx.http_status, json=fx.body)
+
+    return handler
+
+
+async def test_a_bare_object_comes_back_as_itself():
+    """There is no envelope on this endpoint family, so there is nothing to
+    unwrap. The old client returned `body["data"]` and would have handed the
+    caller an empty dict."""
+    assert await _client(_answering("fundlimit")).get("/v2/fundlimit") == corpus.body("fundlimit")
+
+
+async def test_a_bare_array_comes_back_as_a_list():
+    """The return type is not a dict. Anything annotated `dict` here is
+    wrong for four of the endpoints this client exists to call."""
+    assert await _client(_answering("orders_list")).get("/v2/orders") == []
+
+
+async def test_an_order_acknowledgement_is_not_a_rejection():
+    """THE REGRESSION, at the seam. This body used to raise OrderRejected."""
+    body = await _client(_answering("order_accepted")).post("/v2/orders", {})
+    assert body["orderStatus"] == "PENDING"
 
 
 async def test_the_credential_travels_in_headers_never_in_the_body():
@@ -29,7 +64,7 @@ async def test_the_credential_travels_in_headers_never_in_the_body():
     async def handler(request):
         seen["headers"] = dict(request.headers)
         seen["content"] = request.content.decode()
-        return httpx.Response(200, json={"status": "success", "data": {}})
+        return httpx.Response(200, json=corpus.body("order_accepted"))
 
     await _client(handler).post("/v2/orders", {"securityId": "1"})
     assert seen["headers"]["access-token"] == "token-abc"
@@ -37,30 +72,26 @@ async def test_the_credential_travels_in_headers_never_in_the_body():
     assert "token-abc" not in seen["content"]
 
 
-async def test_a_200_carrying_a_failure_body_is_a_rejection():
-    """Dhan answers 200 for failures. A status-code reader would call this a
-    success and hand a caller an empty dict."""
-    async def handler(request):
-        return httpx.Response(200, json={
-            "status": "failed",
-            "remarks": {"error_code": "DH-901", "error_message": "Insufficient funds"},
-        })
-
-    with pytest.raises(OrderRejected, match="Insufficient funds"):
-        await _client(handler).post("/v2/orders", {})
+async def test_a_200_carrying_a_failure_body_is_still_a_failure():
+    """`/v2/ip/getIP` answers 200 with an error inside a bare array. A
+    status-code reader calls this a success and hands the caller the error
+    itself as data."""
+    with pytest.raises(DhanApiError, match="Something went wrong"):
+        await _client(_answering("ip_getip")).get("/v2/ip/getIP")
 
 
 async def test_a_4xx_body_is_still_parsed_for_its_reason():
     """No raise_for_status. A 4xx from Dhan still carries the reason in its
     body, and raising on the code throws away the only description."""
-    async def handler(request):
-        return httpx.Response(400, json={
-            "status": "failed",
-            "remarks": {"error_code": "DH-905", "error_message": "Invalid IP"},
-        })
-
     with pytest.raises(IPNotWhitelisted):
-        await _client(handler).post("/v2/orders", {})
+        await _client(_answering("order_invalid_ip")).post("/v2/orders", {})
+
+
+async def test_a_500_body_is_parsed_too():
+    """`/v2/holdings` answers 500 for an account that simply has none."""
+    with pytest.raises(DhanApiError) as exc:
+        await _client(_answering("holdings")).get("/v2/holdings")
+    assert exc.value.code == "DH-1111"
 
 
 async def test_a_write_that_times_out_is_ambiguous_not_rejected():
@@ -71,7 +102,7 @@ async def test_a_write_that_times_out_is_ambiguous_not_rejected():
     with pytest.raises(Ambiguous) as exc:
         await _client(handler).post("/v2/orders", {})
     assert "/v2/orders" in str(exc.value)
-    assert not isinstance(exc.value, OrderRejected)
+    assert not isinstance(exc.value, DhanApiError)
 
 
 async def test_a_write_whose_body_is_unreadable_is_ambiguous():
@@ -102,6 +133,14 @@ async def test_a_read_whose_body_is_unreadable_is_a_transport_error():
 
     with pytest.raises(TransportError) as exc:
         await _client(handler).get("/v2/positions")
+    assert not isinstance(exc.value, Ambiguous)
+
+
+async def test_a_failure_body_on_a_write_is_never_ambiguous():
+    """A body IS an answer. Ambiguity is the absence of one, and widening it
+    to cover definite refusals would send every rejection to reconciliation."""
+    with pytest.raises(DhanError) as exc:
+        await _client(_answering("order_quantity_required")).post("/v2/orders", {})
     assert not isinstance(exc.value, Ambiguous)
 
 

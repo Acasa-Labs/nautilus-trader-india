@@ -1,0 +1,17 @@
+{
+  "endpoint": "POST /v2/charts/intraday",
+  "http_status": 429,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:34:32+05:30",
+  "source": "live read-only chart fetch from nautilus-trader-india; eight concurrent requests tripped the per-second Data API limit. The endpoint returns candles and places no order.",
+  "retry_after_header": null,
+  "why_it_matters": "The only retryable outcome, and there is no Retry-After header to pace it. Tripped deliberately with eight concurrent chart reads; the message is longer than the one a prior repository had reconstructed by hand, which is the argument for capturing rather than writing fixtures.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "errorType": "Rate_Limit",
+    "errorCode": "DH-904",
+    "errorMessage": "Too many requests on server from single user breaching rate limits. Try throttling API calls."
+  }
+}

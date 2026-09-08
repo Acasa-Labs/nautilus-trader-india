@@ -1,0 +1,17 @@
+{
+  "endpoint": "GET /v2/ip/getIP",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:32:51+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "The body that disproves 'a list means success'. An error lives INSIDE a single-element bare array, at HTTP 200, with `status: \"ERROR\"` and `message` rather than `errorMessage`. The container type is not the discriminator. Note it is NOT an IP-whitelisting error despite the endpoint.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": [
+    {
+      "message": "Something went wrong",
+      "status": "ERROR"
+    }
+  ]
+}

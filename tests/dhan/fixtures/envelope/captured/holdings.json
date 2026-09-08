@@ -1,0 +1,16 @@
+{
+  "endpoint": "GET /v2/holdings",
+  "http_status": 500,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:32:51+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "An HTTP 500 error body that means the portfolio is EMPTY. This account has never traded, so 'No holdings available' is literally true. A reader that treats every error body as a failure reports an empty portfolio as a broken one; a reader that treats every 500 as retryable retries forever.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "errorType": "HOLDING_ERROR",
+    "errorCode": "DH-1111",
+    "errorMessage": "No holdings available"
+  }
+}

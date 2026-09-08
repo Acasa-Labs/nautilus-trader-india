@@ -1,0 +1,28 @@
+{
+  "endpoint": "POST /v2/charts/intraday",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:39:44+05:30",
+  "source": "live read-only fetch from nautilus-trader-india",
+  "request_that_produced_it": {
+    "securityId": "99999999",
+    "exchangeSegment": "IDX_I",
+    "instrument": "INDEX",
+    "interval": "1",
+    "oi": false,
+    "fromDate": "2026-09-04",
+    "toDate": "2026-09-04"
+  },
+  "why_it_matters": "A bare-object success whose every value is an empty array. Byte-identical to a holiday, and a 200. This is the case that makes the status code useless as evidence: an id that does not exist looks exactly like a market that was closed.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "open": [],
+    "high": [],
+    "low": [],
+    "close": [],
+    "volume": [],
+    "timestamp": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "endpoint": "POST /v2/marketfeed/ltp",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:39:07+05:30",
+  "source": "live read-only fetch from nautilus-trader-india",
+  "request_that_produced_it": {
+    "IDX_I": [
+      99999999
+    ]
+  },
+  "why_it_matters": "An unknown security inside the envelope family: HTTP 200, `status: success`, and an EMPTY inner object. Empty is a legitimate answer, not an error -- the same trap as the empty candle arrays.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "data": {
+      "IDX_I": {}
+    },
+    "status": "success"
+  }
+}

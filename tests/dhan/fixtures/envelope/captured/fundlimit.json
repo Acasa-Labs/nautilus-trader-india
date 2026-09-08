@@ -1,0 +1,21 @@
+{
+  "endpoint": "GET /v2/fundlimit",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:32:51+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "`availabelBalance` is misspelled in the API and in the docs. Reading the correct spelling returns None, which renders as a broke account.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "dhanClientId": "SCRUBBED_CLIENT_ID",
+    "availabelBalance": 0.18,
+    "sodLimit": 0.18,
+    "collateralAmount": 0.0,
+    "receiveableAmount": 0.0,
+    "utilizedAmount": 0.0,
+    "blockedPayoutAmount": 0.0,
+    "withdrawableBalance": 0.18
+  }
+}

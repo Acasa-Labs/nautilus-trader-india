@@ -1,0 +1,12 @@
+{
+  "endpoint": "GET /v2/orders/00000000",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:32:51+05:30",
+  "source": "live read-only GET from nautilus-trader-india",
+  "why_it_matters": "An order id that CANNOT exist answers 200 with an empty list -- not 404, not an error body. So a status query cannot tell 'no such order' from 'nothing to report', and an execution client must never read an empty status response as evidence that an order was rejected.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": []
+}

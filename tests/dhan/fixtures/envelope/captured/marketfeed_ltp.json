@@ -1,0 +1,21 @@
+{
+  "endpoint": "POST /v2/marketfeed/ltp",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:38:25+05:30",
+  "source": "live read-only fetch from nautilus-trader-india; returns data and places no order",
+  "why_it_matters": "The same envelope with `data` as a nested object. Two endpoints, two different `data` types, so nothing may assume a dict.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "data": {
+      "IDX_I": {
+        "13": {
+          "last_price": 23690.4
+        }
+      }
+    },
+    "status": "success"
+  }
+}

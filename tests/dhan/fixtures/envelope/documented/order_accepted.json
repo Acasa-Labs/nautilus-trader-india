@@ -1,0 +1,11 @@
+{
+  "endpoint": "POST /v2/orders",
+  "http_status": 200,
+  "provenance": "documented-never-observed",
+  "source": "https://dhanhq.co/docs/v2/orders/ -- Dhan's published success body.",
+  "warning": "NEVER OBSERVED. This account has never placed an order: order placement needs a whitelisted static IP and the only machine with these credentials has a dynamic residential IPv6 prefix. The FIELD NAMES are Dhan's; the VALUES here are illustrative. Treat every assertion resting on this file as provisional and re-capture it the first time a real order is accepted.",
+  "body": {
+    "orderId": "112111182198",
+    "orderStatus": "PENDING"
+  }
+}

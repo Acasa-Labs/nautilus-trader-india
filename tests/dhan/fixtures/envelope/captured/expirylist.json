@@ -1,0 +1,34 @@
+{
+  "endpoint": "POST /v2/optionchain/expirylist",
+  "http_status": 200,
+  "provenance": "captured-live",
+  "captured_at": "2026-09-08T09:38:24+05:30",
+  "source": "live read-only fetch from nautilus-trader-india; returns data and places no order",
+  "why_it_matters": "THE ENVELOPE THAT WAS SAID NOT TO EXIST. `{\"status\":\"success\",\"data\":...}` is real -- on the option-chain and market-feed endpoints, which the vendor notes never probed. Their table's `NOTHING` cell is true of the order, portfolio, funds and profile endpoints and false in general. So the envelope is per endpoint FAMILY, and a classifier must read both. Note `data` here is a LIST, not an object.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID"
+  ],
+  "body": {
+    "data": [
+      "2026-09-08",
+      "2026-09-15",
+      "2026-09-22",
+      "2026-09-29",
+      "2026-10-06",
+      "2026-10-27",
+      "2026-11-23",
+      "2026-12-29",
+      "2027-03-30",
+      "2027-06-29",
+      "2027-12-28",
+      "2028-06-27",
+      "2028-12-26",
+      "2029-06-26",
+      "2029-12-24",
+      "2030-06-25",
+      "2030-12-31",
+      "2031-06-24"
+    ],
+    "status": "success"
+  }
+}
