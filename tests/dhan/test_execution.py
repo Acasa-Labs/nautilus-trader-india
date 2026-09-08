@@ -638,3 +638,54 @@ async def test_a_timed_out_book_read_is_not_an_empty_book_either(
     with pytest.raises(Exception) as exc:
         await client.generate_order_status_reports(_orders_command())
     assert not isinstance(exc.value, list)
+
+
+# -- the generators themselves -----------------------------------------------
+
+
+async def test_the_events_really_reach_the_message_bus(nifty_option, live_env):
+    """Every other test in this file replaces the event generators, so none of
+    them would notice a misspelled keyword argument -- and Nautilus's
+    generators are Cython methods whose signatures this adapter does not
+    control. This one lets the real ones run and watches the bus.
+
+    Without it, the whole file could be green against a client that raises
+    TypeError the first time it is asked to place an order.
+    """
+    published = []
+    client = await _client(_acknowledging(), nifty_option)
+    client._msgbus.register("ExecEngine.process", published.append)
+    await client._submit_order(_submit(_order(nifty_option)))
+    assert [type(event).__name__ for event in published] == [
+        "OrderSubmitted", "OrderAccepted"
+    ]
+    assert published[-1].venue_order_id == VenueOrderId("112111182198")
+
+
+async def test_a_real_denial_reaches_the_bus_too(nifty_option):
+    """The other half: the deny path uses a different generator with a
+    different signature, and it is the one that runs when a config is wrong --
+    which is the first thing anybody will hit."""
+    published = []
+    client = await _client(_acknowledging(), nifty_option, live_orders=False)
+    client._msgbus.register("ExecEngine.process", published.append)
+    await client._submit_order(_submit(_order(nifty_option)))
+    assert [type(event).__name__ for event in published] == ["OrderDenied"]
+    assert LIVE_ORDERS_ENV in published[0].reason
+
+
+async def test_a_real_rejection_and_cancel_reach_the_bus(nifty_option, live_env):
+    """The remaining generator signatures, exercised for real."""
+    published = []
+
+    async def rejecting(request):
+        return httpx.Response(400, json=corpus.body("order_quantity_required"))
+
+    client = await _client(rejecting, nifty_option)
+    client._msgbus.register("ExecEngine.process", published.append)
+    await client._submit_order(_submit(_order(nifty_option)))
+    await client._cancel_order(_cancel(nifty_option))
+    await client._modify_order(_modify(nifty_option))
+    assert [type(event).__name__ for event in published] == [
+        "OrderSubmitted", "OrderRejected", "OrderCancelRejected", "OrderModifyRejected"
+    ]
