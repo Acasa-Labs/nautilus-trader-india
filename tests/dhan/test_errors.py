@@ -49,11 +49,11 @@ def test_every_fixture_declares_a_provenance_matching_its_tier(fx):
     """The directory is the provenance claim. Fixtures are captured, never
     fabricated; a body with no stated origin is indistinguishable from one
     somebody believed in."""
-    assert fx.provenance in {"captured-live", "recorded-elsewhere", "documented-never-observed"}
+    assert fx.provenance in {"captured-live", "recorded-elsewhere", "documented"}
     assert fx.provenance == {
         "captured": "captured-live",
         "recorded": "recorded-elsewhere",
-        "documented": "documented-never-observed",
+        "documented": "documented",
     }[fx.tier]
 
 

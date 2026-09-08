@@ -56,7 +56,13 @@ from nautilus_trader.execution.reports import (
 )
 from nautilus_trader.live.execution_client import LiveExecutionClient
 from nautilus_trader.model.currencies import INR
-from nautilus_trader.model.enums import AccountType, OmsType, OrderSide, TimeInForce
+from nautilus_trader.model.enums import (
+    AccountType,
+    OmsType,
+    OrderSide,
+    OrderType,
+    TimeInForce,
+)
 from nautilus_trader.model.identifiers import (
     AccountId,
     ClientId,
@@ -68,6 +74,9 @@ from nautilus_trader.model.identifiers import (
 from nautilus_india.dhan.auth import from_env
 from nautilus_india.dhan.config import DhanExecClientConfig, submission_refusal
 from nautilus_india.dhan.constants import (
+    ORDER_SLICING_PATH,
+    ORDER_TYPE_LIMIT,
+    ORDERS_EXTERNAL_PATH,
     ORDERS_PATH,
     POSITIONS_PATH,
     SEGMENT_CODES,
@@ -76,10 +85,12 @@ from nautilus_india.dhan.constants import (
 from nautilus_india.dhan.errors import Ambiguous, DhanError, IPNotWhitelisted
 from nautilus_india.dhan.http import DhanHttpClient
 from nautilus_india.dhan.orders import (
+    MARKET_ORDER_NOTE,
     Unsendable,
     fill_report,
     modify_payload,
     order_status_report,
+    order_type_for,
     place_payload,
     position_status_report,
     units_for,
@@ -172,7 +183,14 @@ class DhanExecutionClient(LiveExecutionClient):
             security_id=self._provider.security_id_for(order.instrument_id),
             client_id=self._dhan_client_id,
             product_type=self._config.product_type,
+            after_market_order=self._config.after_market_order,
+            amo_time=self._config.amo_time,
         )
+
+        if order.order_type is OrderType.MARKET:
+            # Disclosure, not a refusal: the order goes as asked, and the
+            # caller is told what the venue will do with it.
+            self._log.warning(f"{order.client_order_id}: {MARKET_ORDER_NOTE}")
 
         self.generate_order_submitted(
             strategy_id=order.strategy_id,
@@ -181,8 +199,9 @@ class DhanExecutionClient(LiveExecutionClient):
             ts_event=self._clock.timestamp_ns(),
         )
 
+        path = ORDER_SLICING_PATH if self._config.slice_over_freeze_limit else ORDERS_PATH
         try:
-            body = await self._http.post(ORDERS_PATH, payload)
+            body = await self._http.post(path, payload)
         except Ambiguous as exc:
             # THE IMPORTANT CASE. The order may be at the exchange. Emitting
             # anything here is a claim we cannot support; the order status
@@ -255,6 +274,8 @@ class DhanExecutionClient(LiveExecutionClient):
                 security_id="0",
                 client_id=self._dhan_client_id,
                 product_type=self._config.product_type,
+                after_market_order=self._config.after_market_order,
+                amo_time=self._config.amo_time,
             )
         except (LookupError, Unsendable) as exc:
             return str(exc)
@@ -371,12 +392,17 @@ class DhanExecutionClient(LiveExecutionClient):
                          "both a quantity and a price."
             )
             return
+        trigger = command.trigger_price or (
+            order.trigger_price if order and order.has_trigger_price else None
+        )
         payload = modify_payload(
             order_id=command.venue_order_id.value,
             client_id=self._dhan_client_id,
             quantity_units=units_for(instrument, quantity),
             price=str(price),
+            trigger_price=str(trigger) if trigger is not None else "",
             validity=validity_for(order.time_in_force if order else TimeInForce.DAY),
+            order_type=order_type_for(order.order_type) if order else ORDER_TYPE_LIMIT,
         )
         try:
             await self._http.put(f"{ORDERS_PATH}/{command.venue_order_id.value}", payload)
@@ -453,12 +479,23 @@ class DhanExecutionClient(LiveExecutionClient):
     async def generate_order_status_report(
         self, command: GenerateOrderStatusReport
     ) -> OrderStatusReport | None:
-        if command.venue_order_id is None:
-            # Dhan has GET /v2/orders/external/{correlationId} for the other
-            # direction, but it has never been called from here and its answer
-            # shape is unobserved. Better to say nothing than to guess.
+        """One order, addressed by whichever id the caller has.
+
+        Dhan's own id is the direct address. When we do not have it there is
+        `GET /v2/orders/external/{correlation-id}`, which exists for exactly
+        this -- Dhan's words are "in case the user has missed order id due to
+        unforeseen reason". Giving up because we lack a venue id would
+        abandon an order whose id Dhan is holding for us.
+        """
+        if command.venue_order_id is not None:
+            path = f"{ORDERS_PATH}/{command.venue_order_id.value}"
+        elif command.client_order_id is not None:
+            path = f"{ORDERS_EXTERNAL_PATH}/{command.client_order_id.value}"
+        else:
+            # Answering with the day's whole order book would be a different
+            # question from the one asked.
             return None
-        body = await self._http.get(f"{ORDERS_PATH}/{command.venue_order_id.value}")
+        body = await self._http.get(path)
         # Dhan documents this endpoint as returning an OBJECT and the one live
         # call this repository has made returned an ARRAY. Both are read.
         rows = body if isinstance(body, list) else [body]
@@ -476,7 +513,20 @@ class DhanExecutionClient(LiveExecutionClient):
     async def generate_fill_reports(
         self, command: GenerateFillReports
     ) -> list[FillReport]:
-        return self._reports_from(await self._http.get(TRADES_PATH), fill_report)
+        """The day's fills, or one order's.
+
+        `GET /v2/trades/{order-id}` exists because, in Dhan's words, "during
+        partial trades or Bracket/Cover Orders traders get confused in reading
+        trade from tradebook". Filtering the whole book client-side would pull
+        every trade of the day to answer a question about one order.
+        """
+        if command.venue_order_id is not None:
+            body = await self._http.get(f"{TRADES_PATH}/{command.venue_order_id.value}")
+        else:
+            body = await self._http.get(TRADES_PATH)
+        # Documented as a bare object for one order and an array for the book.
+        rows = body if isinstance(body, list) else [body]
+        return self._reports_from(rows, fill_report)
 
     async def generate_position_status_reports(
         self, command: GeneratePositionStatusReports

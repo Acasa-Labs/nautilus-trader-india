@@ -1,13 +1,13 @@
 {
-  "endpoint": "DELETE /v2/orders/{order-id}",
-  "http_status": 202,
+  "endpoint": "PUT /v2/orders/{order-id}",
+  "http_status": 200,
   "provenance": "documented",
   "verified_against_live_account": false,
-  "source": "https://dhanhq.co/docs/v2/orders/ -- Order Cancellation",
+  "source": "https://dhanhq.co/docs/v2/orders/",
   "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
-  "why_it_matters": "A cancel answers with the same two-field acknowledgement a placement does. The docs say 202 Accepted; nothing keys on it.",
+  "why_it_matters": "A modify acknowledges with the same two fields a placement does, and the status it comes back with is TRANSIT -- the order is on its way to the exchange again, not yet resting at the new terms.",
   "body": {
     "orderId": "112111182045",
-    "orderStatus": "CANCELLED"
+    "orderStatus": "TRANSIT"
   }
 }

@@ -34,14 +34,31 @@ repository cannot re-observe them**: placing an order needs a whitelisted
 static IP, and the machine holding these credentials has a dynamic residential
 IPv6 prefix. Each file names the record it came from.
 
-### `documented/` — Dhan's docs only. NEVER OBSERVED.
+### `documented/` — Dhan's published specification
 
-Quarantined deliberately. `order_accepted.json` is the success body for
-`POST /v2/orders` — the single most important body in the adapter and the one
-nobody here has ever seen, for the IP reason above. The field names are Dhan's;
-the values are illustrative. **Anything resting on this tier is provisional.**
-Re-capture it the first time a real order is accepted, and move the file up a
-tier when you do.
+<https://dhanhq.co/docs/v2/orders/> documents every request and every response
+on the order path, field by field, with the enum values for each. That is a
+complete specification, and it is the source these fixtures are built from.
+
+They are kept in their own directory because one fact about them is worth
+knowing and cannot be recovered from the file otherwise: **no row of these
+shapes has arrived here**. This account has never traded, and placing an
+order needs a whitelisted static IP the machine holding these credentials does
+not have. Each file says so in `not_observed_here`, and carries
+`verified_against_live_account: false`.
+
+That is a statement about *this account*, not about the source. The field
+names are Dhan's own; the values are Dhan's own samples. Build against them.
+When a real order finally exists, capture the response and move the file up a
+tier — the difference will be in the values, not the shape.
+
+This tier holds the **requests** too, not just the responses. Pinning the
+payload this adapter builds against the payload Dhan documents is a test the
+response fixtures cannot do, and it is the one that catches a missing required
+field — which matters because Dhan validates in order (quantity, then the IP,
+then the instrument), so an incomplete payload fails with "quantity is
+required" and never reaches the check that would have told you the real
+problem.
 
 ## What the corpus establishes
 
@@ -106,8 +123,11 @@ first time one exists.
 
 ## Adding to it
 
-Capture, do not compose. A `GET` against the live account is free and read-only;
-if the shape you need can only come from a write, it belongs in `recorded/`
-with a pointer to where it was observed, or in `documented/` with a warning.
-`tests/dhan/test_errors.py` asserts that every fixture declares its provenance,
-so a hand-written body cannot enter quietly.
+Capture where you can, cite where you cannot, and never compose. A `GET`
+against the live account is free and read-only, so a shape a read can produce
+belongs in `captured/`. A shape only a write produces belongs in `recorded/`
+with a pointer to where it was observed, or in `documented/` with the doc URL
+and the field list it came from. What is forbidden is the fourth thing: a body
+somebody wrote because it looked right. `tests/dhan/test_errors.py` asserts
+that every fixture declares a provenance matching its directory, so one cannot
+enter quietly.

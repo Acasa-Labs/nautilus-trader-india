@@ -1,0 +1,27 @@
+{
+  "endpoint": "POST /v2/orders/slicing",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/orders/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "Identical body to a placement. The endpoint is what differs: it splits a quantity over the F&O freeze limit into several orders, which the exchange would otherwise reject outright.",
+  "body": {
+    "dhanClientId": "1000000003",
+    "correlationId": "123abc678",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "INTRADAY",
+    "orderType": "MARKET",
+    "validity": "DAY",
+    "securityId": "11536",
+    "quantity": "5",
+    "disclosedQuantity": "",
+    "price": "",
+    "triggerPrice": "",
+    "afterMarketOrder": false,
+    "amoTime": "",
+    "boProfitValue": "",
+    "boStopLossValue": ""
+  }
+}

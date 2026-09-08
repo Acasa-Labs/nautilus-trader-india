@@ -1,11 +1,11 @@
 {
-  "endpoint": "GET /v2/trades",
+  "endpoint": "GET /v2/trades/{order-id}",
   "http_status": 200,
   "provenance": "documented",
   "verified_against_live_account": false,
-  "source": "https://dhanhq.co/docs/v2/orders/ -- Trade Book response",
+  "source": "https://dhanhq.co/docs/v2/orders/",
   "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
-  "why_it_matters": "The fill report's source. `tradedQuantity` is in UNITS, so it divides by the lot to become a Nautilus quantity, and `exchangeTradeId` is the only stable per-fill id Dhan gives.",
+  "why_it_matters": "The fills of ONE order. Documented as a bare object rather than the array /v2/trades returns, even though the text says it includes 'all the trades generated for a particular order id' -- so both shapes are read.",
   "body": {
     "dhanClientId": "1000000009",
     "orderId": "112111182045",

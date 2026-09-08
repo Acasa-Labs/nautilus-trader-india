@@ -1,9 +1,10 @@
 {
   "endpoint": "GET /v2/orders",
   "http_status": 200,
-  "provenance": "documented-never-observed",
+  "provenance": "documented",
+  "verified_against_live_account": false,
   "source": "https://dhanhq.co/docs/v2/orders/ -- Order Book response",
-  "warning": "NEVER OBSERVED. This account has never traded, so every array endpoint returns `[]` and no row of this shape has ever arrived here. Field names are Dhan's, read from the v2 docs on 2026-09-08; the values are Dhan's own sample values. Re-capture the first time a real order exists, and move the file up a tier when you do.",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
   "why_it_matters": "Every field the order-status report is built from. Note `orderStatus`, NOT `status`: that is what keeps a real order list from tripping the error detector in `classify`.",
   "body": {
     "dhanClientId": "1000000003",

@@ -18,7 +18,24 @@ squares the position.
 THE PRICE GOES ON THE WIRE AS A STRING. Dhan's own documented request
 structure sends `price` and `quantity` as strings, and a string is the only
 form that carries a Decimal without routing it through a C double on the
-way. 24550.05 is not representable in binary floating point.
+way. 24550.05 is not representable in binary floating point. A field that
+does not apply is sent as `""`, which is what Dhan's sample does -- not as
+`0`, because 0 is a price and no order was placed at one.
+
+THE SURFACE IS DHAN'S DOCUMENTED ONE. <https://dhanhq.co/docs/v2/orders/>
+specifies every request and response field by field, with the enum values
+for each, so that is what this builds to: four order types, six product
+types, two validities, the AMO window, and the disclosed quantity. The
+corpus keeps those documented shapes in `tests/dhan/fixtures/envelope/
+documented/`, requests included, and a test asserts the payload built here
+carries exactly the fields Dhan lists.
+
+ONE THING TO KNOW ABOUT A MARKET ORDER, which is disclosure rather than a
+refusal: Dhan converts an API MARKET order into a limit order with
+market-protection pricing, so it fills at a limit the caller did not name.
+That is the venue's behaviour, it is measured, and it is logged when one is
+sent -- but it is not a reason to refuse an order Dhan documents and the
+caller asked for.
 """
 
 from __future__ import annotations
@@ -48,8 +65,14 @@ from nautilus_trader.model.orders import Order
 
 from nautilus_india.core.calendar import IST
 from nautilus_india.dhan.constants import (
+    AMO_TIMES,
     CORRELATION_ID_MAX_LEN,
+    LEG_NAMES,
     ORDER_TYPE_LIMIT,
+    ORDER_TYPE_MARKET,
+    ORDER_TYPE_STOP_LOSS,
+    ORDER_TYPE_STOP_LOSS_MARKET,
+    PRODUCT_TYPES,
     SEGMENT_NAMES,
     SIDE_BUY,
     SIDE_SELL,
@@ -84,6 +107,51 @@ _VALIDITY = {
 }
 
 _SIDE = {OrderSide.BUY: SIDE_BUY, OrderSide.SELL: SIDE_SELL}
+
+# The four Dhan documents, and the Nautilus type each answers to. Nothing
+# else is mapped: sending a trailing stop as a plain stop would rest an order
+# at a level the caller never chose.
+ORDER_TYPE = {
+    OrderType.LIMIT: ORDER_TYPE_LIMIT,
+    OrderType.MARKET: ORDER_TYPE_MARKET,
+    OrderType.STOP_LIMIT: ORDER_TYPE_STOP_LOSS,
+    OrderType.STOP_MARKET: ORDER_TYPE_STOP_LOSS_MARKET,
+}
+
+# Which of the four carry which price. `triggerPrice` is documented as
+# conditionally required "in case of SL-M & SL-L", and without it Dhan has no
+# level to trigger on.
+_NEEDS_PRICE = {ORDER_TYPE_LIMIT, ORDER_TYPE_STOP_LOSS}
+_NEEDS_TRIGGER = {ORDER_TYPE_STOP_LOSS, ORDER_TYPE_STOP_LOSS_MARKET}
+
+
+def order_type_for(order_type: OrderType) -> str:
+    """Dhan's order type for a Nautilus one. Raises on the rest."""
+    try:
+        return ORDER_TYPE[order_type]
+    except KeyError:
+        raise Unsendable(
+            f"Dhan's order endpoint documents {sorted(set(ORDER_TYPE.values()))} "
+            f"and {order_type!r} is none of them. Mapping it onto one of them "
+            "would send an order the caller did not ask for -- a trailing stop "
+            "sent as a plain stop rests at a level nobody chose."
+        ) from None
+
+
+def _checked(value: str, allowed: frozenset[str], field: str) -> str:
+    """A vocabulary Dhan publishes, checked before it is sent.
+
+    Dhan answers a bad one with its generic Input_Exception, which carries no
+    information -- DH-905 is returned for "Invalid IP" and for "quantity is
+    required" alike -- so the round trip would tell the caller nothing.
+    """
+    if value not in allowed:
+        raise Unsendable(
+            f"{field} must be one of {sorted(allowed)}, got {value!r}. Dhan "
+            "answers an unknown one with its generic Input_Exception, whose "
+            "message names neither the field nor the value."
+        )
+    return value
 
 
 def validity_for(time_in_force: TimeInForce) -> str:
@@ -142,34 +210,70 @@ def correlation_id(client_order_id: ClientOrderId) -> str:
     return value
 
 
+def _price_string(value: object) -> str:
+    """A price for the wire, or `""` when the field does not apply.
+
+    Empty rather than "0": Dhan's own sample sends `""` for a field that does
+    not apply, and 0 is a price -- one no order was ever placed at.
+    """
+    return str(value) if value is not None else ""
+
+
 def place_payload(
     order: Order,
     instrument: Instrument,
     security_id: str,
     client_id: str,
     product_type: str,
+    *,
+    after_market_order: bool = False,
+    amo_time: str = "",
 ) -> dict:
-    """The body of POST /v2/orders. Raises before building an unsound one."""
-    if order.order_type is not OrderType.LIMIT:
+    """The body of POST /v2/orders, field for field with Dhan's own.
+
+    Every key Dhan documents is present, because Dhan validates in ORDER --
+    quantity, then the IP, then the instrument -- so a payload missing one
+    fails with "quantity is required" and never reaches the check that would
+    have named the real problem.
+    """
+    dhan_type = order_type_for(order.order_type)
+    price = order.price if dhan_type in _NEEDS_PRICE and order.has_price else None
+    trigger = (
+        order.trigger_price
+        if dhan_type in _NEEDS_TRIGGER and order.has_trigger_price
+        else None
+    )
+    if dhan_type in _NEEDS_TRIGGER and trigger is None:
         raise Unsendable(
-            f"{order.order_type!r} is not sent to Dhan. Dhan converts an API "
-            "MARKET order into a LIMIT order with market-protection pricing, so "
-            "a 'market' order fills at a limit the caller did not choose and "
-            "cannot see. This adapter sends LIMIT only; name your price."
+            f"{dhan_type} needs a triggerPrice and this order has none. Dhan "
+            "documents it as conditionally required for SL-M and SL-L, and "
+            "without one the venue has no level to trigger on."
         )
+    # Dhan counts the disclosed quantity in units too, so a lot figure here
+    # would disclose a sixty-fifth of what was meant.
+    display = getattr(order, "display_qty", None)
     return {
         "dhanClientId": client_id,
         "correlationId": correlation_id(order.client_order_id),
         "transactionType": _SIDE[order.side],
         "exchangeSegment": segment_name(instrument),
-        "productType": product_type,
-        "orderType": ORDER_TYPE_LIMIT,
+        "productType": _checked(product_type, PRODUCT_TYPES, "productType"),
+        "orderType": dhan_type,
         "validity": validity_for(order.time_in_force),
         "securityId": str(security_id),
         "quantity": str(units_for(instrument, order.quantity)),
-        "price": str(order.price),
-        "disclosedQuantity": "0",
-        "afterMarketOrder": False,
+        "disclosedQuantity": str(units_for(instrument, display)) if display else "",
+        "price": _price_string(price),
+        "triggerPrice": _price_string(trigger),
+        "afterMarketOrder": after_market_order,
+        # Conditionally required, and only once the order IS an AMO. Sending a
+        # window on an ordinary order claims something the caller did not.
+        "amoTime": _checked(amo_time, AMO_TIMES, "amoTime") if after_market_order else "",
+        # Bracket-order legs. Empty unless the product type is BO, which this
+        # adapter does not build for the caller -- but the fields are Dhan's
+        # and their absence is a payload Dhan does not recognise.
+        "boProfitValue": "",
+        "boStopLossValue": "",
     }
 
 
@@ -178,21 +282,29 @@ def modify_payload(
     client_id: str,
     quantity_units: int,
     price: str,
+    trigger_price: str,
     validity: str,
+    order_type: str,
+    leg_name: str = "",
 ) -> dict:
-    """The body of PUT /v2/orders/{order-id}.
+    """The body of PUT /v2/orders/{order-id}, field for field with Dhan's own.
 
-    `legName` is deliberately absent. It is required only for BO and CO
-    orders, which this adapter does not place, and sending an empty one has
-    never been tested against the venue.
+    A modify REPLACES the order's terms rather than patching them, so every
+    field Dhan names is sent -- an omitted one is not "leave it alone", it is
+    a term the venue decides for itself.
+
+    `legName` names which leg of a bracket or cover order is being changed.
+    Dhan has no other handle on a leg, and it is empty for an ordinary order.
     """
     return {
         "dhanClientId": client_id,
         "orderId": str(order_id),
-        "orderType": ORDER_TYPE_LIMIT,
+        "orderType": order_type,
+        "legName": _checked(leg_name, LEG_NAMES, "legName") if leg_name else "",
         "quantity": str(quantity_units),
         "price": str(price),
-        "disclosedQuantity": "0",
+        "disclosedQuantity": "",
+        "triggerPrice": str(trigger_price),
         "validity": validity,
     }
 
@@ -386,3 +498,15 @@ def position_status_report(
         ts_last=ist_to_ns(row.get("updateTime")),
         ts_init=ts_init,
     )
+
+
+# Disclosure, not a refusal. Dhan converts an API MARKET order into a limit
+# order with market-protection pricing, measured on a live account, so a
+# "market" order fills at a limit the caller never named. The order is still
+# sent -- Dhan documents MARKET and the caller asked for it -- and the client
+# says this when it sends one.
+MARKET_ORDER_NOTE = (
+    "Dhan converts an API MARKET order into a LIMIT order with "
+    "market-protection pricing, so this order will fill at a limit that "
+    "neither you nor this adapter chose. Send a LIMIT order to name your own."
+)

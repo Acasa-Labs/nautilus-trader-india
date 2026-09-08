@@ -22,8 +22,8 @@ Not a fork.
 > | Margin is per-instrument, not per-portfolio | A multi-leg short is **over**-charged ~1.66×. Safe for sizing, wrong for research — it can veto trades the exchange would have allowed. |
 > | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
-> | **The order path has never run** | No order has ever been placed with this code. Placing one needs a whitelisted static IP, and the machine these adapters were written on has a dynamic residential address, so `POST /v2/orders` has never been reached. Every order-path fixture is Dhan's *documentation* rather than a captured response, and is marked as such in `tests/dhan/fixtures/envelope/`. |
-> | LIMIT orders only | Dhan converts an API `MARKET` order into a limit order with market-protection pricing. Rather than fill you at a price you did not choose and cannot see, this adapter **refuses** a market order. Stop and stop-limit orders are not implemented. |
+> | **The order path has never run** | No order has ever been placed with this code. Placing one needs a whitelisted static IP, and the machine these adapters were written on has a dynamic residential address, so `POST /v2/orders` has never been reached. The adapter is built to Dhan's [published specification](https://dhanhq.co/docs/v2/orders/), which is complete for every request and response — but the fixtures behind the order path are that specification rather than captured responses, and say so in `tests/dhan/fixtures/envelope/documented/`. |
+> | A `MARKET` order does not fill at the market | Dhan converts an API `MARKET` order into a limit order with **market-protection pricing**, so it fills at a limit neither you nor this adapter chose. The order is sent as asked and the adapter logs a warning when it does. Send a `LIMIT` order to name your own price. |
 > | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
 > | Fills arrive by polling, not by socket | `generate_fill_reports` reads `GET /v2/trades`. Dhan's order-update WebSocket is not wired up yet, so a fill is seen at the next reconciliation rather than the instant it happens. |
 > | Commission is reported as zero | Dhan does not send one: `GET /v2/trades` carries no charge and the margin calculator returns `brokerage: 0.0`. `core.fees` models the charge; putting that estimate into a broker record would launder our own number as the venue's. |
@@ -41,7 +41,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | **shipped**, 84 tests. **Never run against a live account.** |
+| `nautilus_india.dhan` — execution | **shipped**, 113 tests. Full documented order surface; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
@@ -97,6 +97,21 @@ exchange, so the adapter says nothing and leaves it to
 `generate_order_status_reports`. It never reports such an order rejected:
 that would tell the engine an order is dead while it is live, and the
 position that follows is one nobody chose.
+
+All nine endpoints on [Dhan's order page](https://dhanhq.co/docs/v2/orders/)
+are covered — place, modify, cancel, slice, the order book, an order by
+Dhan's id or by your own `correlationId`, the trade book, and the trades of
+one order — with all four documented order types (`LIMIT`, `MARKET`,
+`STOP_LOSS`, `STOP_LOSS_MARKET`), all six product types, both validities,
+the disclosed quantity and the after-market window.
+
+Two of those are opt-in on the config, because each turns your order into
+something structurally different:
+
+| Option | What it changes |
+| --- | --- |
+| `slice_over_freeze_limit=True` | Routes to `POST /v2/orders/slicing`, which splits a quantity over the F&O freeze limit into **several orders**, each with its own id and its own fills. |
+| `after_market_order=True` | Sends the order for release at `amo_time` (`PRE_OPEN`, `OPEN`, `OPEN_30`, `OPEN_60`) rather than now. |
 
 **Known gap:** Dhan publishes no market-feed segment code for NSE commodity,
 so its 23,870 `OPTFUT` contracts are listed but not subscribable. Dhan's own

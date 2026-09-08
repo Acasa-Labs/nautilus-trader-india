@@ -93,12 +93,14 @@ def test_the_order_type_sent_is_always_limit(nifty_option):
     assert _payload(nifty_option)["orderType"] == "LIMIT"
 
 
-def test_a_market_order_is_refused_rather_than_silently_repriced(nifty_option):
+def test_what_dhan_does_to_a_market_order_is_disclosed_not_hidden(nifty_option):
     """Dhan converts an API MARKET order into a LIMIT order with
-    market-protection pricing, so it fills at a limit the caller did not
-    choose and cannot see."""
-    with pytest.raises(Unsendable, match="market-protection"):
-        _payload(nifty_option, _market_order(nifty_option))
+    market-protection pricing, so it fills at a limit the caller did not name.
+    That is measured, and it is the venue's behaviour to disclose -- the order
+    is still sent, because Dhan documents MARKET and the caller asked for it.
+    The note exists so the client can say so at submission."""
+    assert "market-protection" in orders.MARKET_ORDER_NOTE
+    assert _payload(nifty_option, _market_order(nifty_option))["orderType"] == "MARKET"
 
 
 def test_gtc_becomes_day_because_the_exchange_has_no_other_answer():
@@ -162,7 +164,7 @@ def test_a_sell_is_sent_as_sell(nifty_option):
 def test_a_modify_payload_names_the_order_and_the_new_terms():
     payload = orders.modify_payload(
         order_id="112111182045", client_id="CLIENT1", quantity_units=130,
-        price="24550.05", validity="DAY",
+        price="24550.05", trigger_price="", validity="DAY", order_type="LIMIT",
     )
     assert payload["orderId"] == "112111182045"
     assert payload["quantity"] == "130"
@@ -170,13 +172,15 @@ def test_a_modify_payload_names_the_order_and_the_new_terms():
     assert payload["orderType"] == "LIMIT"
 
 
-def test_a_modify_payload_sends_no_leg_name():
-    """`legName` is required only for BO and CO orders, which this adapter
-    does not place. Sending an empty one has never been tested at the venue."""
+def test_an_ordinary_modify_sends_an_empty_leg_name():
+    """`legName` applies to BO and CO only, but the field is Dhan's and a
+    modify replaces the order's terms -- so it is sent empty rather than
+    omitted, which is a payload Dhan does not recognise."""
     payload = orders.modify_payload(
-        order_id="1", client_id="C", quantity_units=65, price="1.00", validity="DAY"
+        order_id="1", client_id="C", quantity_units=65, price="1.00",
+        trigger_price="", validity="DAY", order_type="LIMIT",
     )
-    assert "legName" not in payload
+    assert payload["legName"] == ""
 
 
 def test_nothing_in_the_payload_is_a_float(nifty_option):
@@ -374,4 +378,173 @@ def test_an_unknown_position_type_raises(nifty_option):
         orders.position_status_report(
             dict(corpus.body("position_row")) | {"positionType": "SIDEWAYS"},
             nifty_option, ACCOUNT, UUID4(), 0,
+        )
+
+
+# -- the full documented order surface ---------------------------------------
+#
+# https://dhanhq.co/docs/v2/orders/ specifies four order types, five product
+# types, two validities and the AMO window, request and response, field by
+# field. That is the surface this adapter builds to.
+
+from nautilus_trader.model.enums import OrderType, TriggerType  # noqa: E402
+from nautilus_trader.model.orders import StopLimitOrder, StopMarketOrder  # noqa: E402
+
+
+def _stop_limit(instrument, price="100.25", trigger="99.00"):
+    return StopLimitOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-4"),
+        order_side=OrderSide.SELL, quantity=Quantity.from_int(1),
+        price=Price.from_str(price), trigger_price=Price.from_str(trigger),
+        trigger_type=TriggerType.LAST_PRICE, init_id=UUID4(), ts_init=0,
+        time_in_force=TimeInForce.DAY,
+    )
+
+
+def _stop_market(instrument, trigger="99.00"):
+    return StopMarketOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-5"),
+        order_side=OrderSide.SELL, quantity=Quantity.from_int(1),
+        trigger_price=Price.from_str(trigger), trigger_type=TriggerType.LAST_PRICE,
+        init_id=UUID4(), ts_init=0, time_in_force=TimeInForce.DAY,
+    )
+
+
+def test_the_payload_matches_dhan_s_documented_request_field_for_field(nifty_option):
+    """The documented request structure is the field list to build against.
+    Dhan validates in order -- quantity, then the IP, then the instrument -- so
+    a payload missing a required field fails with 'quantity is required' and
+    never reaches the check that would have named the real problem."""
+    documented = set(corpus.body("order_placement_request"))
+    assert set(_payload(nifty_option)) == documented
+
+
+def test_every_documented_order_type_is_sendable(nifty_option):
+    """LIMIT, MARKET, STOP_LOSS and STOP_LOSS_MARKET. All four are Dhan's."""
+    assert set(orders.ORDER_TYPE.values()) == {
+        "LIMIT", "MARKET", "STOP_LOSS", "STOP_LOSS_MARKET"
+    }
+
+
+def test_a_market_order_is_sent_as_market(nifty_option):
+    """Dhan documents MARKET, so this adapter sends it. Note what Dhan then
+    does with it -- see `place_payload` -- but that is the venue's behaviour to
+    disclose, not a reason to refuse the caller's order."""
+    payload = _payload(nifty_option, _market_order(nifty_option))
+    assert payload["orderType"] == "MARKET"
+    # Documented as an empty string on a market order, not a zero: a zero is a
+    # price, and no order was placed at one.
+    assert payload["price"] == ""
+    assert payload["triggerPrice"] == ""
+
+
+def test_a_stop_limit_carries_both_prices(nifty_option):
+    """`triggerPrice` is conditionally required for SL-M and SL-L. Without it
+    Dhan has no level to trigger on and the order is refused."""
+    payload = _payload(nifty_option, _stop_limit(nifty_option))
+    assert payload["orderType"] == "STOP_LOSS"
+    assert payload["price"] == "100.25"
+    assert payload["triggerPrice"] == "99.00"
+
+
+def test_a_stop_market_carries_only_the_trigger(nifty_option):
+    payload = _payload(nifty_option, _stop_market(nifty_option))
+    assert payload["orderType"] == "STOP_LOSS_MARKET"
+    assert payload["triggerPrice"] == "99.00"
+    assert payload["price"] == ""
+
+
+@pytest.mark.parametrize(
+    "order_type",
+    [OrderType.MARKET_IF_TOUCHED, OrderType.LIMIT_IF_TOUCHED,
+     OrderType.TRAILING_STOP_MARKET, OrderType.TRAILING_STOP_LIMIT,
+     OrderType.MARKET_TO_LIMIT],
+)
+def test_an_order_type_dhan_does_not_document_is_refused(order_type):
+    """Dhan's order endpoint takes four. Mapping a fifth onto one of them
+    sends an order the caller did not ask for."""
+    with pytest.raises(Unsendable):
+        orders.order_type_for(order_type)
+
+
+def test_a_disclosed_quantity_is_sent_in_units_like_any_other(nifty_option):
+    """Dhan counts units here too, and asks for more than 30% of the quantity.
+    Sending lots would disclose a sixty-fifth of what was meant."""
+    order = LimitOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=nifty_option.id, client_order_id=ClientOrderId("O-6"),
+        order_side=OrderSide.BUY, quantity=Quantity.from_int(4),
+        price=Price.from_str("100.25"), init_id=UUID4(), ts_init=0,
+        time_in_force=TimeInForce.DAY, display_qty=Quantity.from_int(2),
+    )
+    payload = _payload(nifty_option, order)
+    assert payload["quantity"] == "260"
+    assert payload["disclosedQuantity"] == "130"
+
+
+def test_no_disclosed_quantity_is_an_empty_string(nifty_option):
+    """Dhan's own sample sends "" for the fields that do not apply."""
+    assert _payload(nifty_option)["disclosedQuantity"] == ""
+
+
+def test_an_after_market_order_names_its_window(nifty_option):
+    """`amoTime` is conditionally required once `afterMarketOrder` is true, and
+    Dhan rejects a value outside its four."""
+    payload = orders.place_payload(
+        order=_limit_order(nifty_option, Price.from_str("100.25")),
+        instrument=nifty_option, security_id="43492", client_id="CLIENT1",
+        product_type="INTRADAY", after_market_order=True, amo_time="OPEN_30",
+    )
+    assert payload["afterMarketOrder"] is True
+    assert payload["amoTime"] == "OPEN_30"
+
+
+def test_an_unknown_amo_window_is_refused(nifty_option):
+    with pytest.raises(Unsendable, match="amoTime"):
+        orders.place_payload(
+            order=_limit_order(nifty_option, Price.from_str("100.25")),
+            instrument=nifty_option, security_id="43492", client_id="CLIENT1",
+            product_type="INTRADAY", after_market_order=True, amo_time="WHENEVER",
+        )
+
+
+def test_an_unknown_product_type_is_refused(nifty_option):
+    """Dhan documents six. A seventh is a typo that the venue answers with its
+    generic Input_Exception, which says nothing useful."""
+    with pytest.raises(Unsendable, match="productType"):
+        orders.place_payload(
+            order=_limit_order(nifty_option, Price.from_str("100.25")),
+            instrument=nifty_option, security_id="43492", client_id="CLIENT1",
+            product_type="SWING",
+        )
+
+
+def test_the_modify_payload_matches_dhan_s_documented_request(nifty_option):
+    documented = set(corpus.body("order_modification_request"))
+    payload = orders.modify_payload(
+        order_id="1", client_id="C", quantity_units=65, price="1.00",
+        trigger_price="", validity="DAY", order_type="LIMIT",
+    )
+    assert set(payload) == documented
+
+
+def test_a_modify_can_name_the_leg_it_is_changing():
+    """`legName` is conditionally required for BO and CO, and Dhan addresses a
+    leg by name -- ENTRY_LEG, TARGET_LEG, STOP_LOSS_LEG."""
+    payload = orders.modify_payload(
+        order_id="1", client_id="C", quantity_units=65, price="1.00",
+        trigger_price="", validity="DAY", order_type="LIMIT",
+        leg_name="TARGET_LEG",
+    )
+    assert payload["legName"] == "TARGET_LEG"
+
+
+def test_an_unknown_leg_name_is_refused():
+    with pytest.raises(Unsendable, match="legName"):
+        orders.modify_payload(
+            order_id="1", client_id="C", quantity_units=65, price="1.00",
+            trigger_price="", validity="DAY", order_type="LIMIT",
+            leg_name="MIDDLE_LEG",
         )

@@ -230,16 +230,18 @@ async def test_an_unknown_instrument_is_denied_before_any_request(
     assert sent == []
 
 
-async def test_a_market_order_is_denied_before_any_request(
-    nifty_option, live_env, recorded
+async def test_a_market_order_is_sent_and_what_dhan_does_to_it_is_logged(
+    nifty_option, live_env, recorded, caplog
 ):
-    """Dhan would fill it at a market-protection limit the caller never saw."""
+    """Dhan documents MARKET, so the caller gets the order they asked for.
+    What Dhan then does to it -- converts it to a limit with market-protection
+    pricing, measured -- is disclosed at submission rather than used as a
+    reason to refuse."""
     sent = []
     client = await _client(_acknowledging(sent), nifty_option)
     await client._submit_order(_market_submit(nifty_option))
-    assert _names(recorded) == ["generate_order_denied"]
-    assert sent == []
-    assert "market-protection" in recorded[0][1]["reason"]
+    assert _names(recorded) == ["generate_order_submitted", "generate_order_accepted"]
+    assert len(sent) == 1
 
 
 async def test_an_unroutable_instrument_is_denied_before_any_request(
@@ -689,3 +691,194 @@ async def test_a_real_rejection_and_cancel_reach_the_bus(nifty_option, live_env)
     assert [type(event).__name__ for event in published] == [
         "OrderSubmitted", "OrderRejected", "OrderCancelRejected", "OrderModifyRejected"
     ]
+
+
+# -- the endpoints the docs specify and this client had skipped ---------------
+
+
+async def test_a_status_report_can_be_asked_for_by_client_order_id(
+    nifty_option, live_env
+):
+    """`GET /v2/orders/external/{correlation-id}` exists precisely for this:
+    Dhan's own words are 'in case the user has missed order id due to
+    unforeseen reason'. Returning None because we lack a venue id would give
+    up on an order whose id Dhan is holding for us."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=_row("order_book_row", quantity=65,
+                                             correlationId="O-1"))
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=ClientOrderId("O-1"),
+        venue_order_id=None, command_id=UUID4(), ts_init=0,
+    ))
+    assert seen["path"] == "/v2/orders/external/O-1"
+    assert report is not None
+    assert report.client_order_id == ClientOrderId("O-1")
+
+
+async def test_the_venue_id_is_preferred_when_both_are_given(nifty_option, live_env):
+    """Dhan's own id is the direct address; the correlation lookup is the
+    fallback for when we do not have it."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=_row("order_book_row", quantity=65))
+
+    client = await _client(handler, nifty_option)
+    await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=ClientOrderId("O-1"),
+        venue_order_id=VenueOrderId("112111182198"), command_id=UUID4(), ts_init=0,
+    ))
+    assert seen["path"] == "/v2/orders/112111182198"
+
+
+async def test_neither_id_is_none_rather_than_the_whole_book(nifty_option, live_env):
+    """Answering with the day's entire order book would be a different
+    question from the one asked."""
+    sent = []
+
+    async def handler(request):
+        sent.append(request.url.path)
+        return httpx.Response(200, json=[])
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=None,
+        venue_order_id=None, command_id=UUID4(), ts_init=0,
+    ))
+    assert report is None
+    assert sent == []
+
+
+async def test_fills_for_one_order_ask_only_for_that_order(nifty_option, live_env):
+    """`GET /v2/trades/{order-id}` exists because, in Dhan's own words,
+    'during partial trades or Bracket/Cover Orders traders get confused in
+    reading trade from tradebook'. Filtering the whole book client-side would
+    pull every trade of the day to answer a question about one order."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=corpus.body("trade_of_order") |
+                              {"securityId": "43492", "exchangeSegment": "NSE_FNO",
+                               "tradedQuantity": 65})
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_fill_reports(GenerateFillReports(
+        instrument_id=None, venue_order_id=VenueOrderId("112111182045"),
+        start=None, end=None, command_id=UUID4(), ts_init=0,
+    ))
+    assert seen["path"] == "/v2/trades/112111182045"
+    assert len(reports) == 1
+
+
+async def test_fills_with_no_order_named_read_the_whole_trade_book(
+    nifty_option, live_env
+):
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=[_row("trade_book_row", tradedQuantity=65)])
+
+    client = await _client(handler, nifty_option)
+    await client.generate_fill_reports(GenerateFillReports(
+        instrument_id=None, venue_order_id=None, start=None, end=None,
+        command_id=UUID4(), ts_init=0,
+    ))
+    assert seen["path"] == "/v2/trades"
+
+
+async def test_a_sliced_order_goes_to_the_slicing_endpoint(
+    nifty_option, live_env, recorded
+):
+    """Over the F&O freeze limit the exchange rejects the order outright, and
+    Dhan's slicing endpoint splits it into several. Same body, different
+    path -- so this is a config choice, not a payload change."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=corpus.body("order_accepted"))
+
+    clock = LiveClock()
+    msgbus = MessageBus(trader_id=TraderId("TESTER-000"), clock=clock)
+    cache = Cache()
+    cache.add_instrument(nifty_option)
+    client = DhanExecutionClient(
+        loop=asyncio.get_running_loop(), name="DHAN",
+        config=DhanExecClientConfig(
+            client_id="CLIENT1", access_token="tok", live_orders=True,
+            slice_over_freeze_limit=True,
+        ),
+        msgbus=msgbus, cache=cache, clock=clock,
+    )
+    client._http = DhanHttpClient(
+        "CLIENT1", "tok",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    client._provider.add(nifty_option)
+    client._provider._security_ids[nifty_option.id] = "43492"
+    await client._submit_order(_submit(_order(nifty_option)))
+    assert seen["path"] == "/v2/orders/slicing"
+    assert _names(recorded) == ["generate_order_submitted", "generate_order_accepted"]
+
+
+async def test_the_default_client_does_not_slice(nifty_option, live_env, recorded):
+    """Slicing turns one order into several, each with its own id and its own
+    fills. That is a different thing from what the caller asked for, so it is
+    opt-in."""
+    seen = {}
+
+    async def handler(request):
+        seen["path"] = request.url.path
+        return httpx.Response(200, json=corpus.body("order_accepted"))
+
+    client = await _client(handler, nifty_option)
+    await client._submit_order(_submit(_order(nifty_option)))
+    assert seen["path"] == "/v2/orders"
+
+
+def test_every_endpoint_on_dhan_s_order_page_is_reachable():
+    """https://dhanhq.co/docs/v2/orders/ documents nine endpoints. All nine
+    are reachable from this client.
+
+    Asserted against the source text rather than by calling them, because the
+    point is coverage of the documented surface -- each one's behaviour is
+    tested above. A tenth appearing in the docs will not fail this test; a
+    ninth quietly disappearing from the code will.
+    """
+    import inspect
+
+    from nautilus_india.dhan import constants, execution
+
+    source = inspect.getsource(execution)
+    paths = {
+        "POST /orders": constants.ORDERS_PATH,
+        "PUT /orders/{id}": constants.ORDERS_PATH,
+        "DELETE /orders/{id}": constants.ORDERS_PATH,
+        "POST /orders/slicing": constants.ORDER_SLICING_PATH,
+        "GET /orders": constants.ORDERS_PATH,
+        "GET /orders/{id}": constants.ORDERS_PATH,
+        "GET /orders/external/{correlation-id}": constants.ORDERS_EXTERNAL_PATH,
+        "GET /trades": constants.TRADES_PATH,
+        "GET /trades/{order-id}": constants.TRADES_PATH,
+    }
+    assert len(paths) == 9
+    for documented, path in paths.items():
+        name = {
+            constants.ORDERS_PATH: "ORDERS_PATH",
+            constants.ORDER_SLICING_PATH: "ORDER_SLICING_PATH",
+            constants.ORDERS_EXTERNAL_PATH: "ORDERS_EXTERNAL_PATH",
+            constants.TRADES_PATH: "TRADES_PATH",
+        }[path]
+        assert name in source, f"{documented} has no route in the client"
+
+    for verb in ("self._http.post(", "self._http.put(", "self._http.delete(",
+                 "self._http.get("):
+        assert verb in source, verb

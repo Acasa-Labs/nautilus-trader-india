@@ -81,21 +81,45 @@ SEGMENT_CODES = {name: code for code, name in SEGMENT_NAMES.items()}
 SIDE_BUY = "BUY"
 SIDE_SELL = "SELL"
 
-# LIMIT is the only order type this adapter sends. See `orders.py`: Dhan
-# converts an API MARKET order into a limit order with market-protection
-# pricing, so a "market" order is a limit order at a price the caller did not
-# choose.
+# The four order types Dhan documents. SL-L and SL-M additionally need a
+# `triggerPrice`; see `orders.py`.
 ORDER_TYPE_LIMIT = "LIMIT"
+ORDER_TYPE_MARKET = "MARKET"
+ORDER_TYPE_STOP_LOSS = "STOP_LOSS"
+ORDER_TYPE_STOP_LOSS_MARKET = "STOP_LOSS_MARKET"
 
-# CNC and MTF are refused by the F&O segment; INTRADAY and MARGIN are the two
-# that work there. INTRADAY is the default because it is the only one whose
-# margin this package models.
+# The six product types. CNC and MTF are refused by the F&O segment; INTRADAY
+# and MARGIN are the two that work there, and INTRADAY is this package's
+# default because it is the only one whose margin `core.margin` models.
+PRODUCT_CNC = "CNC"
 PRODUCT_INTRADAY = "INTRADAY"
 PRODUCT_MARGIN = "MARGIN"
-PRODUCT_CNC = "CNC"
+PRODUCT_MTF = "MTF"
+PRODUCT_CO = "CO"
+PRODUCT_BO = "BO"
+PRODUCT_TYPES = frozenset(
+    {PRODUCT_CNC, PRODUCT_INTRADAY, PRODUCT_MARGIN, PRODUCT_MTF, PRODUCT_CO, PRODUCT_BO}
+)
 
 VALIDITY_DAY = "DAY"
 VALIDITY_IOC = "IOC"
+
+# When an after-market order is released. Conditionally required, and only
+# once `afterMarketOrder` is true.
+AMO_TIMES = frozenset({"PRE_OPEN", "OPEN", "OPEN_30", "OPEN_60"})
+
+# Which leg of a bracket or cover order a modify addresses. Dhan has no other
+# handle on a leg.
+LEG_NAMES = frozenset({"ENTRY_LEG", "TARGET_LEG", "STOP_LOSS_LEG"})
+
+# Splits a quantity over the F&O freeze limit into several orders, which the
+# exchange would otherwise reject outright. Same body as a placement.
+ORDER_SLICING_PATH = "/v2/orders/slicing"
+
+# Looks an order up by the caller's OWN id. Dhan documents it "in case the
+# user has missed order id due to unforeseen reason" -- which is the only way
+# back to an order whose submission answer never arrived.
+ORDERS_EXTERNAL_PATH = "/v2/orders/external"
 
 # `correlationId` is the ONLY field that round-trips a caller's own id: it
 # comes back on GET /v2/orders and on the order-update socket, so it is where

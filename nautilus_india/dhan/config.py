@@ -39,6 +39,15 @@ class DhanExecClientConfig(LiveExecClientConfig, frozen=True):
     live_orders: bool = False
     # INTRADAY or MARGIN for F&O -- CNC and MTF are refused by the segment.
     product_type: str = PRODUCT_INTRADAY
+    # Route submissions through POST /v2/orders/slicing, which splits a
+    # quantity over the F&O freeze limit into several orders. Off by default:
+    # slicing turns ONE order into several, each with its own id and its own
+    # fills, which is a different thing from what the caller asked for.
+    slice_over_freeze_limit: bool = False
+    # After-market orders. `amo_time` is what Dhan calls conditionally
+    # required -- it applies only once `after_market_order` is true.
+    after_market_order: bool = False
+    amo_time: str = "OPEN"
 
 
 def submission_refusal(

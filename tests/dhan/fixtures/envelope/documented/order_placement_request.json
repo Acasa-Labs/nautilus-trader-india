@@ -1,0 +1,74 @@
+{
+  "endpoint": "POST /v2/orders",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/orders/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "Dhan validates in order -- quantity, then the IP, then the instrument -- so a payload missing a required field never reaches the checks that matter and fails with 'quantity is required' instead of the real reason. This is the field list to build against.",
+  "required_fields": [
+    "dhanClientId",
+    "transactionType",
+    "exchangeSegment",
+    "productType",
+    "orderType",
+    "validity",
+    "quantity",
+    "price"
+  ],
+  "enums": {
+    "transactionType": [
+      "BUY",
+      "SELL"
+    ],
+    "productType": [
+      "CNC",
+      "INTRADAY",
+      "MARGIN",
+      "MTF",
+      "CO",
+      "BO"
+    ],
+    "orderType": [
+      "LIMIT",
+      "MARKET",
+      "STOP_LOSS",
+      "STOP_LOSS_MARKET"
+    ],
+    "validity": [
+      "DAY",
+      "IOC"
+    ],
+    "amoTime": [
+      "PRE_OPEN",
+      "OPEN",
+      "OPEN_30",
+      "OPEN_60"
+    ]
+  },
+  "conditionally_required": {
+    "triggerPrice": "for STOP_LOSS and STOP_LOSS_MARKET",
+    "afterMarketOrder": "for orders placed after market hours",
+    "amoTime": "when afterMarketOrder is true",
+    "boProfitValue": "for BO orders",
+    "boStopLossValue": "for BO orders"
+  },
+  "body": {
+    "dhanClientId": "1000000003",
+    "correlationId": "123abc678",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "INTRADAY",
+    "orderType": "MARKET",
+    "validity": "DAY",
+    "securityId": "11536",
+    "quantity": "5",
+    "disclosedQuantity": "",
+    "price": "",
+    "triggerPrice": "",
+    "afterMarketOrder": false,
+    "amoTime": "",
+    "boProfitValue": "",
+    "boStopLossValue": ""
+  }
+}

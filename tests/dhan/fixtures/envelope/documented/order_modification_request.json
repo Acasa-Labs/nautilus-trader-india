@@ -1,0 +1,43 @@
+{
+  "endpoint": "PUT /v2/orders/{order-id}",
+  "http_status": 200,
+  "provenance": "documented",
+  "verified_against_live_account": false,
+  "source": "https://dhanhq.co/docs/v2/orders/",
+  "not_observed_here": "This account has never traded and cannot place an order without a whitelisted static IP, so no row of this shape has arrived here. The shape is Dhan's published specification, which is complete for both request and response; the VALUES are Dhan's own sample values.",
+  "why_it_matters": "A modify REPLACES the order's terms rather than patching them, so every field it names is sent. `legName` is conditionally required and names which leg of a BO or CO is being modified.",
+  "required_fields": [
+    "dhanClientId",
+    "orderId",
+    "orderType",
+    "validity"
+  ],
+  "enums": {
+    "orderType": [
+      "LIMIT",
+      "MARKET",
+      "STOP_LOSS",
+      "STOP_LOSS_MARKET"
+    ],
+    "legName": [
+      "ENTRY_LEG",
+      "TARGET_LEG",
+      "STOP_LOSS_LEG"
+    ],
+    "validity": [
+      "DAY",
+      "IOC"
+    ]
+  },
+  "body": {
+    "dhanClientId": "1000000009",
+    "orderId": "112111182045",
+    "orderType": "LIMIT",
+    "legName": "",
+    "quantity": "40",
+    "price": "3345.8",
+    "disclosedQuantity": "10",
+    "triggerPrice": "",
+    "validity": "DAY"
+  }
+}
