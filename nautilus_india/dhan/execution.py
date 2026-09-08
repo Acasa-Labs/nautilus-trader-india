@@ -37,18 +37,36 @@ import os
 
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.common.component import LiveClock, MessageBus
-from nautilus_trader.execution.messages import SubmitOrder
+from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.execution.messages import (
+    CancelAllOrders,
+    CancelOrder,
+    ModifyOrder,
+    SubmitOrder,
+)
 from nautilus_trader.live.execution_client import LiveExecutionClient
 from nautilus_trader.model.currencies import INR
-from nautilus_trader.model.enums import AccountType, OmsType
-from nautilus_trader.model.identifiers import AccountId, ClientId, VenueOrderId
+from nautilus_trader.model.enums import AccountType, OmsType, OrderSide, TimeInForce
+from nautilus_trader.model.identifiers import (
+    AccountId,
+    ClientId,
+    ClientOrderId,
+    InstrumentId,
+    VenueOrderId,
+)
 
 from nautilus_india.dhan.auth import from_env
 from nautilus_india.dhan.config import DhanExecClientConfig, submission_refusal
 from nautilus_india.dhan.constants import ORDERS_PATH
 from nautilus_india.dhan.errors import Ambiguous, DhanError, IPNotWhitelisted
 from nautilus_india.dhan.http import DhanHttpClient
-from nautilus_india.dhan.orders import Unsendable, place_payload
+from nautilus_india.dhan.orders import (
+    Unsendable,
+    modify_payload,
+    place_payload,
+    units_for,
+    validity_for,
+)
 from nautilus_india.dhan.providers import DhanInstrumentProvider
 
 
@@ -223,3 +241,154 @@ class DhanExecutionClient(LiveExecutionClient):
         except (LookupError, Unsendable) as exc:
             return str(exc)
         return None
+
+    # -- cancelling and modifying ----------------------------------------
+
+    async def _cancel_order(self, command: CancelOrder) -> None:
+        venue_order_id = command.venue_order_id
+        if venue_order_id is None:
+            # Dhan addresses a cancel by its own order id and offers no other
+            # handle. Guessing one cancels somebody else's order.
+            self.generate_order_cancel_rejected(
+                strategy_id=command.strategy_id,
+                instrument_id=command.instrument_id,
+                client_order_id=command.client_order_id,
+                venue_order_id=None,
+                reason=(
+                    "no venue order id: Dhan cancels by its own order id only, and "
+                    "there is nothing else to address the order by."
+                ),
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+        try:
+            await self._http.delete(f"{ORDERS_PATH}/{venue_order_id.value}")
+        except Ambiguous as exc:
+            # The order may or may not still be working. Saying it is
+            # cancelled is how a live order gets forgotten.
+            self._log.error(
+                f"cancel of {venue_order_id} did not complete and may have reached "
+                f"Dhan ({exc}). NO EVENT EMITTED -- the order may still be working. "
+                "Resolve by reconciliation."
+            )
+            return
+        except DhanError as exc:
+            self.generate_order_cancel_rejected(
+                strategy_id=command.strategy_id,
+                instrument_id=command.instrument_id,
+                client_order_id=command.client_order_id,
+                venue_order_id=venue_order_id,
+                reason=str(exc),
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+        self.generate_order_canceled(
+            strategy_id=command.strategy_id,
+            instrument_id=command.instrument_id,
+            client_order_id=command.client_order_id,
+            venue_order_id=venue_order_id,
+            ts_event=self._clock.timestamp_ns(),
+        )
+
+    async def _cancel_all_orders(self, command: CancelAllOrders) -> None:
+        """One DELETE per working order.
+
+        Dhan has no cancel-all on the order endpoint. `DELETE /v2/positions`
+        exits POSITIONS, which is a different and much larger action -- it
+        would close holdings this command never mentioned.
+        """
+        for venue_order_id in self._open_venue_order_ids(
+            command.instrument_id, command.order_side
+        ):
+            await self._cancel_order(
+                CancelOrder(
+                    trader_id=command.trader_id,
+                    strategy_id=command.strategy_id,
+                    instrument_id=command.instrument_id,
+                    client_order_id=self._client_order_id_for(venue_order_id),
+                    venue_order_id=venue_order_id,
+                    command_id=UUID4(),
+                    ts_init=self._clock.timestamp_ns(),
+                )
+            )
+
+    def _open_venue_order_ids(
+        self, instrument_id: InstrumentId, order_side: OrderSide
+    ) -> list[VenueOrderId]:
+        """The working orders this client knows about, from the cache."""
+        found = []
+        for order in self._cache.orders_open(instrument_id=instrument_id):
+            if order_side != OrderSide.NO_ORDER_SIDE and order.side != order_side:
+                continue
+            if order.venue_order_id is not None:
+                found.append(order.venue_order_id)
+        return found
+
+    def _client_order_id_for(self, venue_order_id: VenueOrderId) -> ClientOrderId:
+        """Our own id for a venue id, falling back to the venue's own.
+
+        The fallback is for an order this session did not place -- one from
+        Dhan's app, or from a session that has since restarted. Refusing to
+        cancel it would leave a working order nobody here can reach.
+        """
+        return self._cache.client_order_id(venue_order_id) or ClientOrderId(
+            venue_order_id.value
+        )
+
+    async def _modify_order(self, command: ModifyOrder) -> None:
+        if command.venue_order_id is None:
+            self._reject_modify(command, "no venue order id: Dhan modifies by its "
+                                         "own order id only.")
+            return
+        instrument = self._cache.instrument(command.instrument_id)
+        order = self._cache.order(command.client_order_id)
+        quantity = command.quantity or (order.quantity if order else None)
+        price = command.price or (order.price if order else None)
+        if instrument is None or quantity is None or price is None:
+            # Dhan's modify replaces the terms rather than patching them, so a
+            # missing one would be sent as absent and the venue would decide
+            # what it meant.
+            self._reject_modify(
+                command, "a Dhan modify replaces the order's terms, so it needs "
+                         "both a quantity and a price."
+            )
+            return
+        payload = modify_payload(
+            order_id=command.venue_order_id.value,
+            client_id=self._dhan_client_id,
+            quantity_units=units_for(instrument, quantity),
+            price=str(price),
+            validity=validity_for(order.time_in_force if order else TimeInForce.DAY),
+        )
+        try:
+            await self._http.put(f"{ORDERS_PATH}/{command.venue_order_id.value}", payload)
+        except Ambiguous as exc:
+            self._log.error(
+                f"modify of {command.venue_order_id} did not complete and may have "
+                f"reached Dhan ({exc}). NO EVENT EMITTED -- the order's terms are "
+                "unknown until reconciliation says."
+            )
+            return
+        except DhanError as exc:
+            self._reject_modify(command, str(exc))
+            return
+        self.generate_order_updated(
+            strategy_id=command.strategy_id,
+            instrument_id=command.instrument_id,
+            client_order_id=command.client_order_id,
+            venue_order_id=command.venue_order_id,
+            quantity=quantity,
+            price=price,
+            trigger_price=None,
+            ts_event=self._clock.timestamp_ns(),
+        )
+
+    def _reject_modify(self, command: ModifyOrder, reason: str) -> None:
+        self.generate_order_modify_rejected(
+            strategy_id=command.strategy_id,
+            instrument_id=command.instrument_id,
+            client_order_id=command.client_order_id,
+            venue_order_id=command.venue_order_id,
+            reason=reason,
+            ts_event=self._clock.timestamp_ns(),
+        )

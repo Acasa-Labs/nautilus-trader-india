@@ -286,3 +286,157 @@ async def test_an_ip_failure_degrades_the_client_not_just_the_order(
     assert len(sent) == 1, "the second order reached Dhan after an IP failure"
     assert client.is_degraded_by_ip is True
     assert _names(recorded)[-1] == "generate_order_denied"
+
+
+# -- cancelling and modifying ------------------------------------------------
+
+from nautilus_trader.execution.messages import (  # noqa: E402
+    CancelAllOrders,
+    CancelOrder,
+    ModifyOrder,
+)
+from nautilus_trader.model.identifiers import VenueOrderId  # noqa: E402
+
+
+def _cancel(instrument, venue_order_id="112111182045"):
+    return CancelOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-1"),
+        venue_order_id=VenueOrderId(venue_order_id) if venue_order_id else None,
+        command_id=UUID4(), ts_init=0,
+    )
+
+
+def _modify(instrument, venue_order_id="112111182045"):
+    return ModifyOrder(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=instrument.id, client_order_id=ClientOrderId("O-1"),
+        venue_order_id=VenueOrderId(venue_order_id) if venue_order_id else None,
+        quantity=Quantity.from_int(2), price=Price.from_str("24550.05"),
+        trigger_price=None, command_id=UUID4(), ts_init=0,
+    )
+
+
+def _cancelling(seen=None):
+    async def handler(request):
+        if seen is not None:
+            seen.append((request.method, request.url.path))
+        return httpx.Response(202, json=corpus.body("order_cancelled"))
+    return handler
+
+
+async def test_a_cancel_reaches_the_order_by_its_venue_id(
+    nifty_option, live_env, recorded
+):
+    seen = []
+    client = await _client(_cancelling(seen), nifty_option)
+    await client._cancel_order(_cancel(nifty_option))
+    assert seen == [("DELETE", "/v2/orders/112111182045")]
+    assert _names(recorded) == ["generate_order_canceled"]
+
+
+async def test_a_cancel_that_times_out_emits_nothing(nifty_option, live_env, recorded):
+    """A cancel is a write. If we do not know whether it landed, saying the
+    order is cancelled is how a live order gets forgotten."""
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = await _client(handler, nifty_option)
+    await client._cancel_order(_cancel(nifty_option))
+    assert _names(recorded) == []
+
+
+async def test_a_refused_cancel_is_a_cancel_rejection(nifty_option, live_env, recorded):
+    async def handler(request):
+        return httpx.Response(400, json=corpus.body("order_quantity_required"))
+
+    client = await _client(handler, nifty_option)
+    await client._cancel_order(_cancel(nifty_option))
+    assert _names(recorded) == ["generate_order_cancel_rejected"]
+
+
+async def test_a_cancel_with_no_venue_id_is_not_sent(nifty_option, live_env, recorded):
+    """Dhan addresses a cancel by its own order id and has no other handle.
+    Guessing one would cancel somebody else's order."""
+    seen = []
+    client = await _client(_cancelling(seen), nifty_option)
+    await client._cancel_order(_cancel(nifty_option, venue_order_id=None))
+    assert seen == []
+    assert _names(recorded) == ["generate_order_cancel_rejected"]
+
+
+async def test_cancel_all_cancels_each_working_order_it_knows_about(
+    nifty_option, live_env, recorded
+):
+    """Dhan has no cancel-all on /v2/orders. `DELETE /v2/positions` exits
+    POSITIONS, which is a different and much larger action -- it would close
+    holdings the command never mentioned."""
+    seen = []
+    client = await _client(_cancelling(seen), nifty_option)
+    client._open_venue_order_ids = lambda instrument_id, side: [
+        VenueOrderId("1"), VenueOrderId("2")
+    ]
+    await client._cancel_all_orders(CancelAllOrders(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=nifty_option.id, order_side=OrderSide.NO_ORDER_SIDE,
+        command_id=UUID4(), ts_init=0,
+    ))
+    assert [path for _, path in seen] == ["/v2/orders/1", "/v2/orders/2"]
+
+
+async def test_cancel_all_with_nothing_working_sends_nothing(
+    nifty_option, live_env, recorded
+):
+    seen = []
+    client = await _client(_cancelling(seen), nifty_option)
+    await client._cancel_all_orders(CancelAllOrders(
+        trader_id=TraderId("TESTER-000"), strategy_id=StrategyId("S-001"),
+        instrument_id=nifty_option.id, order_side=OrderSide.NO_ORDER_SIDE,
+        command_id=UUID4(), ts_init=0,
+    ))
+    assert seen == []
+
+
+async def test_a_modify_sends_the_new_price_exactly(nifty_option, live_env, recorded):
+    seen = {}
+
+    async def handler(request):
+        seen["method"], seen["path"] = request.method, request.url.path
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json={"orderId": "112111182045",
+                                         "orderStatus": "TRANSIT"})
+
+    client = await _client(handler, nifty_option)
+    await client._modify_order(_modify(nifty_option))
+    assert seen["method"] == "PUT"
+    assert seen["path"] == "/v2/orders/112111182045"
+    assert '"24550.05"' in seen["body"], seen["body"]
+    # Lots on the way in, units on the wire: 2 x 65.
+    assert '"130"' in seen["body"], seen["body"]
+    assert _names(recorded) == ["generate_order_updated"]
+
+
+async def test_a_modify_that_times_out_emits_nothing(nifty_option, live_env, recorded):
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = await _client(handler, nifty_option)
+    await client._modify_order(_modify(nifty_option))
+    assert _names(recorded) == []
+
+
+async def test_a_refused_modify_is_a_modify_rejection(nifty_option, live_env, recorded):
+    async def handler(request):
+        return httpx.Response(400, json=corpus.body("order_quantity_required"))
+
+    client = await _client(handler, nifty_option)
+    await client._modify_order(_modify(nifty_option))
+    assert _names(recorded) == ["generate_order_modify_rejected"]
+
+
+async def test_a_modify_with_no_venue_id_is_not_sent(nifty_option, live_env, recorded):
+    seen = []
+    client = await _client(_cancelling(seen), nifty_option)
+    await client._modify_order(_modify(nifty_option, venue_order_id=None))
+    assert seen == []
+    assert _names(recorded) == ["generate_order_modify_rejected"]

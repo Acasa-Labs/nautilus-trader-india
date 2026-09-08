@@ -13,9 +13,10 @@ for four of the endpoints this client exists to call -- a claim no runtime
 test can catch, which is why it is stated here.
 
 READS AND WRITES FAIL DIFFERENTLY, and this is the point of the module. A GET
-changes nothing, so a GET that times out is just a failed read. A POST may
-have reached the venue, so a POST that times out is ambiguous and the caller
-must not conclude anything about the order. Marking reads ambiguous too would
+changes nothing, so a GET that times out is just a failed read. A POST, PUT or
+DELETE may have reached the venue, so one that times out is ambiguous and the
+caller must not conclude anything about the order -- least of all a DELETE,
+where the guess that it did not land is how a live order gets forgotten. Marking reads ambiguous too would
 flood the operator with false alarms and train them to ignore the one signal
 that matters.
 
@@ -77,13 +78,28 @@ class DhanHttpClient:
 
     async def post(self, path: str, payload: dict) -> Any:
         """A write. Failure without a body is ambiguous, never a rejection."""
+        return await self._write("POST", path, payload)
+
+    async def put(self, path: str, payload: dict) -> Any:
+        """A write: a modify. Same rule -- an unknown outcome stays unknown."""
+        return await self._write("PUT", path, payload)
+
+    async def delete(self, path: str) -> Any:
+        """A write: a cancel, and the most dangerous one to guess about.
+
+        A cancel whose outcome is unknown leaves an order that may still be
+        working, and reporting it cancelled is how a live order is forgotten.
+        """
+        return await self._write("DELETE", path, None)
+
+    async def _write(self, method: str, path: str, payload: dict | None) -> Any:
         try:
-            response = await self._client.post(
-                f"{self._base}{path}", json=payload, headers=self._headers
+            response = await self._client.request(
+                method, f"{self._base}{path}", json=payload, headers=self._headers
             )
         except httpx.HTTPError as exc:
             raise Ambiguous(
-                f"POST {path} did not complete ({exc}). The request may have "
+                f"{method} {path} did not complete ({exc}). The request may have "
                 "reached Dhan; do not conclude the order was rejected. Ask "
                 "Dhan what it holds."
             ) from exc

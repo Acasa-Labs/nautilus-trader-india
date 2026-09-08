@@ -150,3 +150,35 @@ async def test_the_token_is_redacted_from_repr():
     assert "super-secret-token" not in repr(client)
     assert "CLIENT1" in repr(client)
     await client.aclose()
+
+
+@pytest.mark.parametrize("verb", ["put", "delete"])
+async def test_every_write_verb_is_ambiguous_on_a_timeout(verb):
+    """A cancel and a modify are writes too. A DELETE that times out may have
+    cancelled the order; reporting it either way is a guess, and the guess
+    that it did not is how a live order gets forgotten."""
+    async def handler(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = _client(handler)
+    with pytest.raises(Ambiguous):
+        if verb == "put":
+            await client.put("/v2/orders/1", {})
+        else:
+            await client.delete("/v2/orders/1")
+
+
+@pytest.mark.parametrize("verb", ["put", "delete"])
+async def test_every_write_verb_uses_its_own_method(verb):
+    seen = {}
+
+    async def handler(request):
+        seen["method"] = request.method
+        return httpx.Response(202, json=corpus.body("order_cancelled"))
+
+    client = _client(handler)
+    if verb == "put":
+        await client.put("/v2/orders/1", {})
+    else:
+        await client.delete("/v2/orders/1")
+    assert seen["method"] == verb.upper()
