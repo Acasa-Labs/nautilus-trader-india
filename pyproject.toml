@@ -1,6 +1,6 @@
 [project]
 name = "nautilus-trader-india"
-version = "0.1.0"
+version = "0.1.1"
 description = "ALPHA. A NautilusTrader adapter for Dhan (NSE, BSE, MCX). Zerodha Kite is planned and not yet started."
 readme = "README.md"
 license = "MIT"
