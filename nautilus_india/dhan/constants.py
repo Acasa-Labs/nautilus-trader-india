@@ -123,10 +123,18 @@ ORDERS_EXTERNAL_PATH = "/v2/orders/external"
 
 # `correlationId` is the ONLY field that round-trips a caller's own id: it
 # comes back on GET /v2/orders and on the order-update socket, so it is where
-# the ClientOrderId has to live. Dhan caps it at 30 characters. A default
-# Nautilus id (`O-19700101-000000-001-000-1`) is 27 and fits with three to
-# spare; a UUID one is 36 and does not.
-CORRELATION_ID_MAX_LEN = 30
+# a ClientOrderId has to live.
+#
+# TWENTY-FIVE, MEASURED -- the docs say 30. Binary-searched in Dhan's sandbox
+# on 2026-09-08: 25 characters is accepted and 26 is refused, with DH-905 and
+# no indication which field was wrong. The docs' own charset note is
+# "[^a-zA-Z0-9 _-]", whose leading caret NEGATES the class, so it cannot be
+# read literally either; spaces, hyphens and underscores are all accepted.
+#
+# The consequence is not cosmetic. A DEFAULT Nautilus ClientOrderId
+# (`O-19700101-000000-001-000-1`) is 27 characters, so it does not fit and
+# never will -- the format's fixed parts alone exceed the limit.
+CORRELATION_ID_MAX_LEN = 25
 
 # -- super orders ------------------------------------------------------------
 # Entry, target and stop loss as ONE request, sharing one orderId. Legs are

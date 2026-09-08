@@ -40,6 +40,9 @@ caller asked for.
 
 from __future__ import annotations
 
+import hashlib
+import re
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
 
@@ -192,30 +195,75 @@ def units_for(instrument: Instrument, quantity: Quantity) -> int:
     return int(quantity.as_decimal() * instrument.multiplier.as_decimal())
 
 
-def correlation_id(client_order_id: ClientOrderId) -> str:
-    """The ClientOrderId, checked against Dhan's 30-character cap.
+# Dhan accepts alphanumerics, spaces, hyphens and underscores -- measured.
+# The docs' own note is "[^a-zA-Z0-9 _-]", whose leading caret NEGATES the
+# class, so it cannot be read literally.
+_SAFE_CORRELATION = re.compile(r"^[A-Za-z0-9 _-]+$")
 
-    Refused rather than truncated: a truncated id round-trips as a DIFFERENT
-    id, so the fill it comes back on matches no order and reads as an
-    unexplained position rather than as a bug.
+# 9 bytes -> 18 hex characters, inside the measured 25-character limit with
+# room to spare. 72 bits: at a million orders the chance of any collision is
+# about one in ten billion, and a collision would attach one order's fills to
+# another's position, so the margin is deliberate.
+_DIGEST_BYTES = 9
+
+
+def correlation_id(client_order_id: ClientOrderId) -> str:
+    """The value to send as `correlationId`, derived when it has to be.
+
+    An id Dhan will take is sent AS IS, so it stays readable in Dhan's own
+    order book. Anything longer than the measured 25 characters, or carrying a
+    character outside the measured charset, is hashed instead.
+
+    HASHED RATHER THAN TRUNCATED, AND RATHER THAN REFUSED. Truncating sends a
+    DIFFERENT id, and the fill that comes back on it matches no order --
+    which reads as an unexplained position rather than as a bug. Refusing
+    would deny every ordinary order, because Nautilus's generator cannot
+    produce one that fits: the default is 27 characters and the format's fixed
+    parts alone exceed the limit.
+
+    HASHED RATHER THAN COUNTED, so the derivation is deterministic. A counter
+    would need a map, the map would need persisting, and a restart between a
+    submission and its answer is exactly when the id matters most --
+    `GET /v2/orders/external/{id}` is the only way to find an order whose
+    placement timed out.
+
+    The cost is that the id in Dhan's own UI is opaque. `client_order_id_for`
+    is how it maps back.
     """
     value = client_order_id.value
-    if len(value) > CORRELATION_ID_MAX_LEN:
-        raise Unsendable(
-            f"client order id {value!r} is {len(value)} characters and Dhan's "
-            f"correlationId takes at most {CORRELATION_ID_MAX_LEN}. It is the "
-            "only field that round-trips a caller's own id, so it cannot be "
-            "truncated. Set `use_uuid_client_order_ids=False` on the trader: "
-            "the default id is 27 characters and fits."
-        )
-    return value
+    if len(value) <= CORRELATION_ID_MAX_LEN and _SAFE_CORRELATION.match(value):
+        return value
+    return hashlib.blake2s(value.encode(), digest_size=_DIGEST_BYTES).hexdigest()
+
+
+def client_order_id_for(
+    correlation: str, candidates: Iterable[ClientOrderId]
+) -> ClientOrderId | None:
+    """Which of our orders a `correlationId` belongs to, or None.
+
+    By recomputation rather than by reversal -- that is what makes the
+    deterministic derivation load-bearing rather than incidental.
+
+    None is a real answer and not a failure: an order placed from Dhan's own
+    app, or by a session whose orders this one never saw, carries a
+    correlationId that is not ours. Guessing at the nearest of our own would
+    attach a stranger's fill to our position.
+    """
+    if not correlation:
+        return None
+    for candidate in candidates:
+        if correlation_id(candidate) == correlation:
+            return candidate
+    return None
 
 
 def _price_string(value: object) -> str:
     """A price for the wire, or `""` when the field does not apply.
 
-    Empty rather than "0": Dhan's own sample sends `""` for a field that does
-    not apply, and 0 is a price -- one no order was ever placed at.
+    Used by the super-order and forever-order payloads, where every price
+    field Dhan documents is REQUIRED, so the empty case barely arises. On
+    /v2/orders it does arise, and there an empty string is refused -- see
+    `place_payload`, which omits the key instead.
     """
     return str(value) if value is not None else ""
 
@@ -230,12 +278,16 @@ def place_payload(
     after_market_order: bool = False,
     amo_time: str = "",
 ) -> dict:
-    """The body of POST /v2/orders, field for field with Dhan's own.
+    """The body of POST /v2/orders.
 
-    Every key Dhan documents is present, because Dhan validates in ORDER --
-    quantity, then the IP, then the instrument -- so a payload missing one
-    fails with "quantity is required" and never reaches the check that would
-    have named the real problem.
+    A FIELD THAT DOES NOT APPLY IS OMITTED, NOT SENT EMPTY. Dhan's documented
+    request structure sends `""` for `price`, `triggerPrice`,
+    `disclosedQuantity`, `amoTime`, `boProfitValue` and `boStopLossValue` when
+    they do not apply. Sent that way the order is REFUSED -- DH-905, "Missing
+    required fields, bad values for parameters etc.", naming nothing. The
+    identical payload with those keys absent is accepted. Measured in the
+    sandbox on 2026-09-08 by sending both; the empty strings are the only
+    difference between the two.
     """
     dhan_type = order_type_for(order.order_type)
     price = order.price if dhan_type in _NEEDS_PRICE and order.has_price else None
@@ -250,10 +302,8 @@ def place_payload(
             "documents it as conditionally required for SL-M and SL-L, and "
             "without one the venue has no level to trigger on."
         )
-    # Dhan counts the disclosed quantity in units too, so a lot figure here
-    # would disclose a sixty-fifth of what was meant.
-    display = getattr(order, "display_qty", None)
-    return {
+
+    payload = {
         "dhanClientId": client_id,
         "correlationId": correlation_id(order.client_order_id),
         "transactionType": _SIDE[order.side],
@@ -263,19 +313,22 @@ def place_payload(
         "validity": validity_for(order.time_in_force),
         "securityId": str(security_id),
         "quantity": str(units_for(instrument, order.quantity)),
-        "disclosedQuantity": str(units_for(instrument, display)) if display else "",
-        "price": _price_string(price),
-        "triggerPrice": _price_string(trigger),
         "afterMarketOrder": after_market_order,
+    }
+    if price is not None:
+        payload["price"] = str(price)
+    if trigger is not None:
+        payload["triggerPrice"] = str(trigger)
+    # Dhan counts the disclosed quantity in units too, so a lot figure here
+    # would disclose a sixty-fifth of what was meant.
+    display = getattr(order, "display_qty", None)
+    if display:
+        payload["disclosedQuantity"] = str(units_for(instrument, display))
+    if after_market_order:
         # Conditionally required, and only once the order IS an AMO. Sending a
         # window on an ordinary order claims something the caller did not.
-        "amoTime": _checked(amo_time, AMO_TIMES, "amoTime") if after_market_order else "",
-        # Bracket-order legs. Empty unless the product type is BO, which this
-        # adapter does not build for the caller -- but the fields are Dhan's
-        # and their absence is a payload Dhan does not recognise.
-        "boProfitValue": "",
-        "boStopLossValue": "",
-    }
+        payload["amoTime"] = _checked(amo_time, AMO_TIMES, "amoTime")
+    return payload
 
 
 def modify_payload(
@@ -316,7 +369,17 @@ def modify_payload(
 # five and a half hours early -- most of a session -- so a fill drops onto
 # the previous trading day and reconciliation compares two different days.
 _DHAN_TIME = "%Y-%m-%d %H:%M:%S"
+_DHAN_DATE = "%Y-%m-%d"
 _NANOS_PER_SECOND = 1_000_000_000
+
+# Dhan's "never happened" marker. An order that was rejected before reaching
+# the exchange comes back with `exchangeTime: "0001-01-01 00:00:00"` and
+# `drvExpiryDate: "0001-01-01"` -- sentinels, not times. The docs show `null`
+# for these fields; the API sends these. Parsed literally the first is
+# -62135618008000000000 nanoseconds, and Nautilus accepts a negative timestamp
+# WITHOUT COMPLAINT, so the report would carry a date in year 1 and nothing
+# would notice. Measured on a real rejected order, sandbox, 2026-09-08.
+_ZERO_DATE_PREFIX = "0001-01-01"
 
 # Dhan's seven documented statuses. `CLOSED` appears on super orders, which
 # this adapter does not place.
@@ -338,10 +401,16 @@ _POSITION_SIDE = {
 
 
 def ist_to_ns(stamp: str | None) -> int:
-    """A Dhan timestamp as UNIX nanoseconds. Empty means unset, not the epoch."""
-    if not stamp:
+    """A Dhan timestamp as UNIX nanoseconds. Unset is 0, never a real instant.
+
+    Three things count as unset: absent, empty, and Dhan's `0001-01-01`
+    sentinel -- see `_ZERO_DATE_PREFIX` for why the last one matters.
+    """
+    if not stamp or str(stamp).startswith(_ZERO_DATE_PREFIX):
         return 0
-    parsed = datetime.strptime(stamp, _DHAN_TIME).replace(tzinfo=IST)
+    text = str(stamp)
+    fmt = _DHAN_TIME if " " in text else _DHAN_DATE
+    parsed = datetime.strptime(text, fmt).replace(tzinfo=IST)
     return int(parsed.timestamp()) * _NANOS_PER_SECOND
 
 
@@ -397,17 +466,26 @@ def order_status_report(
     account_id: AccountId,
     report_id: UUID4,
     ts_init: int,
+    client_order_ids: Iterable[ClientOrderId] = (),
 ) -> OrderStatusReport:
-    """One row of GET /v2/orders as a Nautilus report."""
+    """One row of GET /v2/orders as a Nautilus report.
+
+    `client_order_ids` are the orders this session knows about, used to map
+    Dhan's echoed `correlationId` back to ours. It has to be a lookup rather
+    than a cast, because the value on the wire may be a DERIVED id -- see
+    `correlation_id` -- and because Dhan generates its own when none is sent.
+    """
     correlation = str(row.get("correlationId") or "")
     average = row.get("averageTradedPrice")
     return OrderStatusReport(
         account_id=account_id,
         instrument_id=instrument.id,
         venue_order_id=VenueOrderId(str(row["orderId"])),
-        # An order placed from Dhan's own app carries no correlationId.
-        # Dropping the row would hide a position the account really holds.
-        client_order_id=ClientOrderId(correlation) if correlation else None,
+        # None is a real answer: an order placed from Dhan's own app, or one
+        # whose correlationId Dhan generated itself, is not ours. The row is
+        # still reported -- dropping it would hide a position the account
+        # really holds, which is the case reconciliation exists to catch.
+        client_order_id=client_order_id_for(correlation, client_order_ids),
         order_side=_side_of(row),
         # This adapter sends LIMIT only, so a MARKET row can only be an order
         # the account placed somewhere else. Reported as what it is.

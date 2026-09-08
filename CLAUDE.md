@@ -2,10 +2,11 @@
 
 NautilusTrader adapters for Zerodha Kite and Dhan. MIT. Not a fork.
 
-**ALPHA.** This code is intended to place real orders with real money and has
-never been run against a live account. Nothing here may be softened on the
-grounds that it is "only alpha" — alpha is precisely when the guards below
-matter, because there is no production history to catch what they miss.
+**ALPHA.** This code is intended to place real orders with real money. It has
+placed orders in Dhan's **sandbox** and never against a live account. Nothing
+here may be softened on the grounds that it is "only alpha" — alpha is
+precisely when the guards below matter, because there is no production history
+to catch what they miss.
 
 ## Rules
 
@@ -68,6 +69,18 @@ Every fixture in `tests/fixtures/` is a real venue response with credentials
 scrubbed. A hand-written "valid" payload encodes what we believe rather than
 what the venue sends, which is precisely the bug fixtures exist to catch.
 
+**And a fixture states where it came from.** `tests/dhan/fixtures/envelope/`
+has one directory per source — live, sandbox, recorded elsewhere, documented —
+because they are not equally strong and the difference has already mattered:
+`GET /v2/holdings` answers `200 []` in the sandbox and `500` in production, so
+a sandbox capture is evidence about the sandbox first. A test asserts every
+fixture declares a provenance matching its directory.
+
+**Documentation is a source, not a disclaimer.** Where Dhan specifies a
+request and response field by field, build the whole surface from it; "we have
+never observed this on our account" is a fact about the account, never a
+reason to implement a subset.
+
 For the same reason, a test that reconciles against an external calculator
 must be filled in from that calculator. Populating it from our own output
 asserts only that the model agrees with itself.
@@ -77,6 +90,18 @@ asserts only that the model agrees with itself.
 Each phase lands as failing tests first. A phase is done when its tests
 assert the behaviour in its "done when" column and pass — not when the code
 exists.
+
+### The venue's limits are measured, not read
+
+Dhan's docs have been wrong about its own API in ways that silently break
+orders: `correlationId` caps at 25 characters and not the documented 30, and
+the documented request body — which sends `""` for inapplicable fields — is
+refused outright. Both were found only by calling the sandbox, and both had
+passing unit tests agreeing with the wrong value.
+
+Where a limit or a required shape can be measured, measure it, and put the
+measurement and its date next to the constant. `docs/DHAN_API_NOTES.md` is
+where the reasoning lives.
 
 ### Tables raise rather than default
 
@@ -102,4 +127,5 @@ from a private repository.
 - Kite Connect v3 — https://kite.trade/docs/connect/v3/
 - NautilusTrader Python adapter base classes —
   `nautilus_trader/adapters/_template/`, `live/factories.py`, `live/node.py`
+- **Measured Dhan behaviour, and where the docs are wrong — `docs/DHAN_API_NOTES.md`**
 - Known core gaps — `docs/UPSTREAM_GAPS.md`

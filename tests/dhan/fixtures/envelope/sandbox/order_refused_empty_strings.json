@@ -1,0 +1,35 @@
+{
+  "endpoint": "POST /v2/orders",
+  "http_status": 400,
+  "provenance": "sandbox",
+  "captured_at": "2026-09-08T11:45:00+05:30",
+  "source": "https://sandbox.dhan.co -- live calls, simulated exchange",
+  "not_the_live_api": "Captured from https://sandbox.dhan.co, NOT from the live API. The sandbox is not a faithful mirror -- measured divergences are listed in docs/DHAN_API_NOTES.md -- so a shape seen only here is evidence about the sandbox and only probable evidence about production.",
+  "why_it_matters": "DHAN'S OWN DOCUMENTED REQUEST BODY, REFUSED. The documented sample sends `\"\"` for the fields that do not apply. Sent that way the order fails; the identical payload with those keys OMITTED is accepted, and the empty strings are the only difference between the two. The error names no field.",
+  "request_that_produced_it": {
+    "dhanClientId": "SCRUBBED_CLIENT_ID",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "INTRADAY",
+    "orderType": "LIMIT",
+    "validity": "DAY",
+    "securityId": "11536",
+    "quantity": "1",
+    "price": "1000.00",
+    "disclosedQuantity": "",
+    "triggerPrice": "",
+    "afterMarketOrder": false,
+    "amoTime": "",
+    "boProfitValue": "",
+    "boStopLossValue": ""
+  },
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID",
+    "orderId -> SCRUBBED_ORDER_ID"
+  ],
+  "body": {
+    "errorType": "Input_Exception",
+    "errorCode": "DH-905",
+    "errorMessage": "Missing required fields, bad values for parameters etc."
+  }
+}

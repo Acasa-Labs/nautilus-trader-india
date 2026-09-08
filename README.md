@@ -22,7 +22,8 @@ Not a fork.
 > | Margin is per-instrument, not per-portfolio | A multi-leg short is **over**-charged ~1.66×. Safe for sizing, wrong for research — it can veto trades the exchange would have allowed. |
 > | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
-> | **The order path has never run** | No order has ever been placed with this code. Placing one needs a whitelisted static IP, and the machine these adapters were written on has a dynamic residential address, so `POST /v2/orders` has never been reached. The adapter is built to Dhan's [published specification](https://dhanhq.co/docs/v2/orders/), which is complete for every request and response — but the fixtures behind the order path are that specification rather than captured responses, and say so in `tests/dhan/fixtures/envelope/documented/`. |
+> | **The order path has never run against production** | Orders have been placed in Dhan's [sandbox](https://sandbox.dhan.co/v2/), never on a live account — that needs a whitelisted static IP, and the machine this was written on has a dynamic residential address. The sandbox is not a faithful mirror (`GET /v2/holdings` answers `200 []` there and `500` in production), so it raises confidence without settling it. See [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md). |
+> | **Client order ids are hashed, not passed through** | Dhan's `correlationId` accepts 25 characters — measured; the docs say 30 — and a default Nautilus `ClientOrderId` is 27, so it cannot fit. Anything too long is sent as an 18-character `blake2s` digest, which is deterministic and maps back by recomputation. The id in Dhan's own order book is therefore **not human-readable**. |
 > | A `MARKET` order does not fill at the market | Dhan converts an API `MARKET` order into a limit order with **market-protection pricing**, so it fills at a limit neither you nor this adapter chose. The order is sent as asked and the adapter logs a warning when it does. Send a `LIMIT` order to name your own price. |
 > | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
 > | Fills arrive by polling, not by socket | `generate_fill_reports` reads `GET /v2/trades`. Dhan's order-update WebSocket is not wired up yet, so a fill is seen at the next reconciliation rather than the instant it happens. |
@@ -41,7 +42,7 @@ Not a fork.
 | --- | --- |
 | `nautilus_india.core` — symbology, instruments, lots, calendar, fees, margin | **shipped**, 80 tests |
 | `nautilus_india.dhan` — instruments + market data | **shipped**, 183 tests |
-| `nautilus_india.dhan` — execution | **shipped**, 164 tests. Orders, super orders and forever orders; **never run against a live account.** |
+| `nautilus_india.dhan` — execution | **shipped**, 177 tests. Orders, super orders and forever orders. Exercised against Dhan's **sandbox**; **never run against a live account.** |
 | `nautilus_india.kite` — data + execution adapter | not started |
 
 The core is useful on its own: it turns Indian contracts into Nautilus
@@ -144,6 +145,11 @@ asked for. A forever order **requires** a trigger price — that is what the
 > Probed 2026-09-08 — the first works, the second answers **404**. This adapter
 > uses the first, and the 404 body is captured in the corpus because it is a
 > fifth error shape and not Dhan's own.
+
+The behaviours worth knowing before you trust any of this — including the
+three places Dhan's documentation is wrong in ways that silently break an
+order — are written up in [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md),
+each with how and when it was measured.
 
 **Known gap:** Dhan publishes no market-feed segment code for NSE commodity,
 so its 23,870 `OPTFUT` contracts are listed but not subscribable. Dhan's own

@@ -49,9 +49,11 @@ def test_every_fixture_declares_a_provenance_matching_its_tier(fx):
     """The directory is the provenance claim. Fixtures are captured, never
     fabricated; a body with no stated origin is indistinguishable from one
     somebody believed in."""
-    assert fx.provenance in {"captured-live", "recorded-elsewhere", "documented"}
+    assert fx.provenance in {"captured-live", "sandbox", "recorded-elsewhere",
+                             "documented"}
     assert fx.provenance == {
         "captured": "captured-live",
+        "sandbox": "sandbox",
         "recorded": "recorded-elsewhere",
         "documented": "documented",
     }[fx.tier]
@@ -110,14 +112,18 @@ def test_an_unknown_instrument_is_an_empty_success_not_a_failure(name):
     classify(corpus.body(name))  # must not raise
 
 
-@pytest.mark.parametrize("name", ["order_book_row", "trade_book_row", "position_row"])
+@pytest.mark.parametrize(
+    "name",
+    ["order_book_row", "trade_book_row", "position_row", "order_book_row_real"],
+)
 def test_a_real_row_inside_an_array_is_not_an_error(name):
-    """The one gap the corpus could not close: every captured array is empty,
-    because this account has never traded. `classify` tells an error element
-    from a data element by the field name -- Dhan calls an order's state
-    `orderStatus` and a position's `positionType`, never plain `status` --
-    and these three documented rows are what checks that claim until a real
-    non-empty list exists."""
+    """`classify` tells an error element from a data element by the field
+    name: Dhan calls an order's state `orderStatus` and a position's
+    `positionType`, never plain `status`. For a long time that claim rested
+    only on documented rows, because every captured array was empty.
+
+    `order_book_row_real` closes it. It is an actual order-book row from a
+    real placement, and it carries no `status` key."""
     row = corpus.body(name)
     assert "status" not in row
     assert classify([row]) == [row]

@@ -1,0 +1,17 @@
+{
+  "endpoint": "POST /v2/orders",
+  "http_status": 200,
+  "provenance": "sandbox",
+  "captured_at": "2026-09-08T11:45:00+05:30",
+  "source": "https://sandbox.dhan.co -- live calls, simulated exchange",
+  "not_the_live_api": "Captured from https://sandbox.dhan.co, NOT from the live API. The sandbox is not a faithful mirror -- measured divergences are listed in docs/DHAN_API_NOTES.md -- so a shape seen only here is evidence about the sandbox and only probable evidence about production.",
+  "why_it_matters": "THE FIRST ORDER THIS CODEBASE HAS EVER PLACED. Note `orderStatus` is TRANSIT, not the PENDING the docs sample shows -- the order is on its way to the exchange and has not been accepted by it yet. Every one of these was subsequently REJECTED, so a 200 with an orderId is NOT evidence that an order is working.",
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID",
+    "orderId -> SCRUBBED_ORDER_ID"
+  ],
+  "body": {
+    "orderId": "SCRUBBED_ORDER_ID",
+    "orderStatus": "TRANSIT"
+  }
+}

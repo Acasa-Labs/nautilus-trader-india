@@ -463,7 +463,13 @@ class DhanExecutionClient(LiveExecutionClient):
             return None
         return self._cache.instrument(instrument_id) or self._provider.find(instrument_id)
 
-    def _reports_from(self, rows, build) -> list:
+    def _known_client_order_ids(self):
+        """Every client order id this session has, for mapping a correlationId
+        back. Dhan echoes the DERIVED id, so this is a recomputation rather
+        than a cast -- see `orders.correlation_id`."""
+        return self._cache.client_order_ids()
+
+    def _reports_from(self, rows, build, extra_ids=()) -> list:
         """Map rows to reports, skipping -- loudly -- the ones we cannot map.
 
         A row this adapter cannot resolve is a holding it cannot name.
@@ -482,7 +488,12 @@ class DhanExecutionClient(LiveExecutionClient):
                     "adapter cannot name."
                 )
                 continue
-            found.append(build(row, instrument, self.account_id, UUID4(), ts_init))
+            if build is order_status_report:
+                found.append(build(row, instrument, self.account_id, UUID4(),
+                                   ts_init,
+                                   [*extra_ids, *self._known_client_order_ids()]))
+            else:
+                found.append(build(row, instrument, self.account_id, UUID4(), ts_init))
         return found
 
     async def generate_order_status_report(
@@ -505,13 +516,17 @@ class DhanExecutionClient(LiveExecutionClient):
             # question from the one asked.
             return None
         body = await self._http.get(path)
+        # Asked by client order id, we already know whose order this is --
+        # Dhan echoes a DERIVED correlationId, which would otherwise map back
+        # to nothing for an order this session did not itself place.
+        extra = [command.client_order_id] if command.client_order_id else []
         # Dhan documents this endpoint as returning an OBJECT and the one live
         # call this repository has made returned an ARRAY. Both are read.
         rows = body if isinstance(body, list) else [body]
         # Measured: an order id that cannot exist answers 200 with `[]`, so
         # "no such order" and "nothing to say" are the same answer and None is
         # the only one this can honestly give.
-        reports = self._reports_from(rows, order_status_report)
+        reports = self._reports_from(rows, order_status_report, extra_ids=extra)
         return reports[0] if reports else None
 
     async def generate_order_status_reports(

@@ -25,6 +25,7 @@ from nautilus_trader.model.identifiers import ClientOrderId, StrategyId, TraderI
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.model.orders import LimitOrder, MarketOrder
 
+from nautilus_india.dhan import orders as dhan_orders
 from nautilus_india.dhan.config import LIVE_ORDERS_ENV, DhanExecClientConfig
 from nautilus_india.dhan.execution import DhanExecutionClient
 from nautilus_india.dhan.http import DhanHttpClient
@@ -1083,3 +1084,43 @@ async def test_cancelling_a_super_order_leg_warns_that_it_is_final(
     await client.cancel_super_order_leg("112111182045", "TARGET_LEG")
     assert seen == {"method": "DELETE",
                     "path": "/v2/super/orders/112111182045/TARGET_LEG"}
+
+
+async def test_a_report_maps_a_derived_correlation_id_back_to_our_order(
+    nifty_option, live_env
+):
+    """The other half of hashing the client order id. Dhan echoes the DERIVED
+    correlationId, so a report that read it literally would produce a
+    ClientOrderId no order has, and the fill would attach to nothing.
+
+    The client passes what it knows about; the mapping is by recomputation.
+    """
+    ours = ClientOrderId("O-19700101-000000-001-000-1")
+    derived = dhan_orders.correlation_id(ours)
+    assert derived != ours.value, "precondition: this id has to be long enough to hash"
+
+    async def handler(request):
+        return httpx.Response(200, json=[_row("order_book_row", quantity=65,
+                                              correlationId=derived)])
+
+    client = await _client(handler, nifty_option)
+    client._cache.add_order(_order(nifty_option, ours.value), position_id=None)
+    reports = await client.generate_order_status_reports(_orders_command())
+    assert reports[0].client_order_id == ours
+
+
+async def test_a_correlation_id_that_is_not_ours_maps_to_nothing(
+    nifty_option, live_env
+):
+    """Dhan generates its own when none is sent -- `SCRUBBEDID-1788847931670`,
+    captured from the sandbox. It is 24 characters of safe charset, so it
+    looks exactly like an id we could have sent. Attaching it to one of our
+    orders would put a stranger's fill on our position."""
+    async def handler(request):
+        return httpx.Response(200, json=[_row(
+            "order_book_row", quantity=65, correlationId="SCRUBBEDID-1788847931670"
+        )])
+
+    client = await _client(handler, nifty_option)
+    reports = await client.generate_order_status_reports(_orders_command())
+    assert reports[0].client_order_id is None

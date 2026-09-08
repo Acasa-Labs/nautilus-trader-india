@@ -69,21 +69,70 @@ def test_the_quantity_on_the_wire_is_a_string_too(nifty_option):
     assert _payload(nifty_option)["quantity"] == "65"
 
 
-def test_the_client_order_id_rides_in_correlation_id():
+def test_a_short_client_order_id_rides_in_correlation_id_unchanged():
     """The only field that round-trips: it comes back on GET /v2/orders and on
     the order-update socket, so it is the only way to match a fill to the
     order that caused it."""
+    assert orders.correlation_id(ClientOrderId("nti-1")) == "nti-1"
+
+
+def test_an_id_too_long_for_dhan_is_derived_never_truncated():
+    """Nautilus's generator cannot produce an id that fits -- the default is
+    27 characters and the venue takes 25 -- so refusing them would deny every
+    ordinary order, and truncating one would send a DIFFERENT id whose fill
+    matches nothing. It is hashed instead: deterministic, so no map has to be
+    stored and nothing breaks across a restart."""
     got = orders.correlation_id(ClientOrderId("O-19700101-000000-001-000-1"))
-    assert got == "O-19700101-000000-001-000-1"
-    assert len(got) <= 30
+    assert len(got) <= orders.CORRELATION_ID_MAX_LEN
+    assert got != "O-19700101-000000-001-000-1"[: orders.CORRELATION_ID_MAX_LEN]
 
 
-def test_an_id_too_long_for_dhan_is_refused_not_truncated():
-    """Dhan caps correlationId at 30 characters. A truncated id round-trips as
-    a DIFFERENT id, so the fill it returns on matches no order -- which reads
-    as an unexplained position rather than as a bug."""
-    with pytest.raises(Unsendable, match="30"):
-        orders.correlation_id(ClientOrderId("O-" + "9" * 40))
+def test_the_derived_id_is_deterministic():
+    """The whole reason for hashing rather than counting: the same order id
+    yields the same correlationId in a later process, so a timed-out
+    submission can still be found with GET /orders/external/{id}."""
+    a = orders.correlation_id(ClientOrderId("O-19700101-000000-001-000-1"))
+    b = orders.correlation_id(ClientOrderId("O-19700101-000000-001-000-1"))
+    assert a == b
+
+
+def test_different_orders_get_different_derived_ids():
+    """A collision would attach one order's fills to another's position."""
+    seen = {
+        orders.correlation_id(ClientOrderId(f"O-19700101-000000-001-000-{n}"))
+        for n in range(2000)
+    }
+    assert len(seen) == 2000
+
+
+def test_the_derived_id_uses_a_charset_dhan_accepts():
+    """Measured: alphanumerics, spaces, hyphens and underscores are accepted.
+    The docs' own note is `[^a-zA-Z0-9 _-]`, whose leading caret negates the
+    class, so it cannot be read literally. Hex is inside every reading."""
+    got = orders.correlation_id(ClientOrderId("O-19700101-000000-001-000-1"))
+    assert got.isalnum() and got.isascii()
+
+
+def test_a_report_maps_its_correlation_id_back_to_the_order():
+    """A hash nothing can reverse is a hash that loses the fill. The mapping
+    back is by recomputation over the orders we know about, which is why the
+    derivation has to be deterministic."""
+    ours = [ClientOrderId("O-19700101-000000-001-000-1"),
+            ClientOrderId("O-19700101-000000-001-000-2")]
+    sent = orders.correlation_id(ours[1])
+    assert orders.client_order_id_for(sent, ours) == ours[1]
+
+
+def test_an_unknown_correlation_id_maps_to_nothing():
+    """An order placed from Dhan's own app, or by a session whose orders we
+    never saw. Guessing at one of ours would attach a stranger's fill to our
+    position."""
+    assert orders.client_order_id_for("SCRUBBEDID-1788847931670", []) is None
+
+
+def test_a_short_id_still_maps_back_to_itself():
+    ours = [ClientOrderId("nti-1")]
+    assert orders.client_order_id_for("nti-1", ours) == ClientOrderId("nti-1")
 
 
 # -- the four refusals -------------------------------------------------------
@@ -271,8 +320,12 @@ def test_a_quantity_that_is_not_whole_lots_raises(nifty_option):
 
 
 def test_the_client_order_id_comes_back_from_correlation_id(nifty_option):
+    """Short enough to ride as itself, so the value on the wire is the id --
+    but it is still matched against what we know rather than cast, because a
+    correlationId Dhan generated itself looks exactly the same."""
     report = orders.order_status_report(
-        _order_row(correlationId="O-1", quantity=65), nifty_option, ACCOUNT, UUID4(), 0
+        _order_row(correlationId="O-1", quantity=65), nifty_option, ACCOUNT,
+        UUID4(), 0, [ClientOrderId("O-1")],
     )
     assert report.client_order_id == ClientOrderId("O-1")
 
@@ -412,13 +465,40 @@ def _stop_market(instrument, trigger="99.00"):
     )
 
 
-def test_the_payload_matches_dhan_s_documented_request_field_for_field(nifty_option):
-    """The documented request structure is the field list to build against.
-    Dhan validates in order -- quantity, then the IP, then the instrument -- so
-    a payload missing a required field fails with 'quantity is required' and
-    never reaches the check that would have named the real problem."""
+def test_the_payload_sends_no_field_dhan_does_not_document(nifty_option):
+    """Everything sent is a field Dhan names. The reverse does NOT hold -- see
+    the omission test below."""
     documented = set(corpus.body("order_placement_request"))
-    assert set(_payload(nifty_option)) == documented
+    assert set(_payload(nifty_option)) <= documented
+
+
+def test_a_field_that_does_not_apply_is_OMITTED_not_sent_empty(nifty_option):
+    """MEASURED, and it contradicts Dhan's own sample. The documented request
+    structure sends `""` for the fields that do not apply -- `price`,
+    `triggerPrice`, `disclosedQuantity`, `amoTime`, `boProfitValue`,
+    `boStopLossValue`. Sent that way the order is REFUSED:
+
+        400 {"errorType":"Input_Exception","errorCode":"DH-905",
+             "errorMessage":"Missing required fields, bad values for parameters etc."}
+
+    The identical payload with those keys omitted is accepted. Verified in
+    Dhan's sandbox on 2026-09-08 by sending both and comparing; the empty
+    strings are the only difference between the two.
+
+    This adapter copied the documented sample, so before this test every order
+    it built would have been refused, with an error message naming no field.
+    """
+    payload = _payload(nifty_option)
+    assert "" not in payload.values()
+    for absent in ("triggerPrice", "disclosedQuantity", "amoTime",
+                   "boProfitValue", "boStopLossValue"):
+        assert absent not in payload, absent
+
+
+def test_a_market_order_omits_the_price_rather_than_emptying_it(nifty_option):
+    payload = _payload(nifty_option, _market_order(nifty_option))
+    assert "price" not in payload
+    assert payload["orderType"] == "MARKET"
 
 
 def test_every_documented_order_type_is_sendable(nifty_option):
@@ -432,12 +512,7 @@ def test_a_market_order_is_sent_as_market(nifty_option):
     """Dhan documents MARKET, so this adapter sends it. Note what Dhan then
     does with it -- see `place_payload` -- but that is the venue's behaviour to
     disclose, not a reason to refuse the caller's order."""
-    payload = _payload(nifty_option, _market_order(nifty_option))
-    assert payload["orderType"] == "MARKET"
-    # Documented as an empty string on a market order, not a zero: a zero is a
-    # price, and no order was placed at one.
-    assert payload["price"] == ""
-    assert payload["triggerPrice"] == ""
+    assert _payload(nifty_option, _market_order(nifty_option))["orderType"] == "MARKET"
 
 
 def test_a_stop_limit_carries_both_prices(nifty_option):
@@ -453,7 +528,7 @@ def test_a_stop_market_carries_only_the_trigger(nifty_option):
     payload = _payload(nifty_option, _stop_market(nifty_option))
     assert payload["orderType"] == "STOP_LOSS_MARKET"
     assert payload["triggerPrice"] == "99.00"
-    assert payload["price"] == ""
+    assert "price" not in payload
 
 
 @pytest.mark.parametrize(
@@ -484,9 +559,17 @@ def test_a_disclosed_quantity_is_sent_in_units_like_any_other(nifty_option):
     assert payload["disclosedQuantity"] == "130"
 
 
-def test_no_disclosed_quantity_is_an_empty_string(nifty_option):
-    """Dhan's own sample sends "" for the fields that do not apply."""
-    assert _payload(nifty_option)["disclosedQuantity"] == ""
+def test_the_correlation_id_limit_is_the_measured_one_not_the_documented_one():
+    """MEASURED. Dhan documents 30 characters. The API accepts 25 and refuses
+    26 -- binary-searched in the sandbox on 2026-09-08, with DH-905 and no
+    indication which field was at fault.
+
+    This matters more than five characters sounds: a default Nautilus
+    ClientOrderId is 27, so it does NOT fit, and this adapter's own comment
+    said it fit "with three to spare".
+    """
+    assert orders.CORRELATION_ID_MAX_LEN == 25
+    assert len("O-19700101-000000-001-000-1") == 27
 
 
 def test_an_after_market_order_names_its_window(nifty_option):
@@ -575,3 +658,22 @@ def test_a_row_with_no_trigger_claims_none(nifty_option):
     )
     assert report.trigger_price is None
     assert report.trigger_type.name == "NO_TRIGGER"
+
+
+@pytest.mark.parametrize("sentinel", ["0001-01-01 00:00:00", "0001-01-01"])
+def test_dhan_s_zero_date_sentinel_is_unset_not_year_one(sentinel):
+    """MEASURED. An order that never reached the exchange comes back with
+    `exchangeTime: "0001-01-01 00:00:00"` -- a sentinel, not a time. Parsed
+    literally it is -62135618008000000000 nanoseconds, and Nautilus ACCEPTS a
+    negative timestamp without complaint, so the report would carry a date in
+    year 1 and nothing anywhere would notice.
+
+    Seen on a real rejected order in Dhan's sandbox, 2026-09-08. The docs show
+    `null` for these fields; the API sends the sentinel.
+    """
+    assert orders.ist_to_ns(sentinel) == 0
+
+
+def test_a_real_timestamp_still_parses():
+    """The guard must not swallow ordinary values."""
+    assert orders.ist_to_ns("2026-09-08 06:12:15") > 0

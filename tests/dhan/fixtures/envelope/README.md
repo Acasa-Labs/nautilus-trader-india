@@ -14,7 +14,7 @@ So: fixtures are captured, never fabricated. A hand-written "valid" payload
 encodes what we believe rather than what the venue sends, which is precisely
 the bug fixtures exist to catch.
 
-## Three tiers, kept in separate directories
+## Four tiers, kept in separate directories
 
 The directory IS the provenance claim, so a reader sees it in a listing rather
 than by opening a file. Each fixture also carries a `provenance` field.
@@ -25,6 +25,23 @@ Live read-only `GET`s against the real account, credentials scrubbed
 (`dhanClientId` → `SCRUBBED_CLIENT_ID`). The strongest evidence there is.
 `rate_limited.json` was obtained by deliberately tripping the per-second Data
 API limit with concurrent chart reads; charts are a read and place no order.
+
+### `sandbox/` — real calls, simulated exchange
+
+`https://sandbox.dhan.co`, which needs no IP whitelisting and so is the only
+way to exercise the WRITE path from this machine. These are real responses to
+real requests, including the first orders this codebase has ever placed.
+
+**They are not production.** The sandbox diverges in measured ways — most
+sharply, `GET /v2/holdings` answers `200 []` there and `500 DH-1111` on the
+live account, so testing only here would have missed the production bug. The
+divergences are listed in `docs/DHAN_API_NOTES.md`; a shape seen only in this
+tier is strong evidence and not proof.
+
+Three bugs in this adapter were found by this tier in under an hour, each of
+which every unit test had agreed with: empty strings in the request body,
+a `correlationId` limit of 25 rather than the documented 30, and a zero-date
+sentinel that parses to a negative timestamp Nautilus accepts in silence.
 
 ### `recorded/` — real bodies, observed elsewhere
 
@@ -112,14 +129,18 @@ What is left, after all four, is: an error is a body that *says* it failed —
 by an error field, by a `status` that is not `success`, or by either of those
 inside an array element — and the message is wherever that body puts it.
 
-### Known gap
+### The gap that used to be here — now closed
 
-Every bare array in the corpus is **empty**: this account has never traded, so
-no non-empty `/v2/orders`, `/v2/positions` or `/v2/trades` body has ever been
-observed. `classify` tells an error element from an order element by the field
-name — Dhan calls an order's state `orderStatus`, never `status` — and that
-distinction has not been checked against a real order list. Re-check it the
-first time one exists.
+Every bare array in the corpus was once **empty**, because neither account had
+traded, so `classify`'s rule for telling an error element from a data element
+inside a list rested on documented rows alone.
+
+`sandbox/order_book_row_real.json` closes it: an actual order-book row from an
+actual placement, carrying `orderStatus` and no plain `status` key.
+
+What is still unobserved anywhere is a **filled** order — so no real
+`/v2/trades` row and no real position row exists, and the fill-report path is
+still built on documentation. `docs/DHAN_API_NOTES.md` keeps that list.
 
 ## Adding to it
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 CORPUS_DIR = Path(__file__).parent / "fixtures" / "envelope"
-TIERS = ("captured", "recorded", "documented")
+TIERS = ("captured", "sandbox", "recorded", "documented")
 
 
 @dataclass(frozen=True, slots=True)

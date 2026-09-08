@@ -1,0 +1,21 @@
+{
+  "endpoint": "POST /v2/orders",
+  "http_status": 400,
+  "provenance": "sandbox",
+  "captured_at": "2026-09-08T11:45:00+05:30",
+  "source": "https://sandbox.dhan.co -- live calls, simulated exchange",
+  "not_the_live_api": "Captured from https://sandbox.dhan.co, NOT from the live API. The sandbox is not a faithful mirror -- measured divergences are listed in docs/DHAN_API_NOTES.md -- so a shape seen only here is evidence about the sandbox and only probable evidence about production.",
+  "why_it_matters": "A 27-character correlationId, which is the length of a DEFAULT Nautilus ClientOrderId. The docs say the cap is 30. Binary-searched: 25 is accepted, 26 is refused. The same DH-905 as every other input problem, naming nothing.",
+  "request_that_produced_it": {
+    "correlationId": "O-20260908-000000-001-000-1"
+  },
+  "scrubbed": [
+    "dhanClientId -> SCRUBBED_CLIENT_ID",
+    "orderId -> SCRUBBED_ORDER_ID"
+  ],
+  "body": {
+    "errorType": "Input_Exception",
+    "errorCode": "DH-905",
+    "errorMessage": "Missing required fields, bad values for parameters etc."
+  }
+}
