@@ -25,12 +25,13 @@ fork.
 > | Margin is per-instrument, not per-portfolio | A multi-leg short is **over**-charged ~1.66×. Safe for sizing, wrong for research — it can veto trades the exchange would have allowed. |
 > | Historical rates before 2024-10-01 | Estimated, not measured. A backtest over that period may mis-charge STT. |
 > | Live execution is untestable in CI | No socket is ever opened in the test suite. The order path has unit tests and **no integration coverage**. |
-> | **The order path has never run against production** | The client has been driven end to end against Dhan's [sandbox](https://sandbox.dhan.co/v2/) — placing, modifying, cancelling, looking an order up by client order id, and resting a forever order — but never on a live account, which needs a whitelisted static IP the machine this was written on does not have. The sandbox is not a faithful mirror (`GET /v2/holdings` answers `200 []` there and `500` in production), so it raises confidence without settling it. |
+> | **The order path has never run against production** | The client has been driven end to end against Dhan's [sandbox](https://sandbox.dhan.co/v2/) — placing, modifying, cancelling, looking an order up by client order id, and resting a forever order — but never on a live account, which needs a whitelisted static IP the machine this was written on does not have — a **regulatory** requirement rather than a broker policy, and one whose whitelisted address is subject to a **seven-day** modification period that cannot be overridden, reset or waived (Dhan support, 2026-09-08). Closing this gap has a week of lead time, not an afternoon's. The sandbox is not a faithful mirror (`GET /v2/holdings` answers `200 []` there and `500` in production), so it raises confidence without settling it. |
 > | **No order has ever filled** | The sandbox has no matching engine: orders rest at `PENDING` for ever, whatever the price. So `generate_fill_reports` and `generate_position_status_reports` have never produced a report from real data, and every fixture behind them is Dhan's documentation. This is the largest untested surface in the package. See [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md). |
 > | **The order-update stream is unobserved** | `order_updates=True` subscribes to `wss://api-order-update.dhan.co` so a fill is reported when it happens rather than at the next reconciliation. It is **off by default**: the socket refuses sandbox credentials, so not one real frame has ever been parsed. When it drops, the client says so loudly and marks itself disconnected — a stream that dies quietly leaves an engine that looks healthy and learns nothing. |
 > | **Client order ids are hashed, not passed through** | Dhan's `correlationId` accepts 25 characters — measured; the docs say 30 — and a default Nautilus `ClientOrderId` is 27, so it cannot fit. Anything too long is sent as an 18-character `blake2s` digest, which is deterministic and maps back by recomputation. The id in Dhan's own order book is therefore **not human-readable**. |
 > | A `MARKET` order does not fill at the market | Dhan converts an API `MARKET` order into a limit order with **market-protection pricing**, so it fills at a limit neither you nor this adapter chose. The order is sent as asked and the adapter logs a warning when it does. Send a `LIMIT` order to name your own price. |
 > | `GTC` is sent as `DAY` | NSE rests nothing overnight on this endpoint — every order dies at the close whatever is asked for. Dhan's GTT equivalent is `/v2/forever/orders`, which this adapter does not use. |
+> | Dhan support says forever orders are **gone** | They are not — `GET /v2/forever/orders` answered `200` from the live account on 2026-09-08 and the [endpoint's page](https://dhanhq.co/docs/v2/forever/) is still current. But a vendor employee believing an endpoint is removed is a fact about its future: **do not build anything load-bearing on forever orders.** See [`docs/DHAN_API_NOTES.md`](docs/DHAN_API_NOTES.md). |
 > | Fills arrive by polling unless you opt in | `generate_fill_reports` reads `GET /v2/trades`, so a fill is seen at the next reconciliation rather than the instant it happens. The order-update socket above reports it immediately and is off by default, because it has never been observed. |
 > | Commission is reported as zero | Dhan does not send one: `GET /v2/trades` carries no charge and the margin calculator returns `brokerage: 0.0`. `core.fees` models the charge; putting that estimate into a broker record would launder our own number as the venue's. |
 >
@@ -160,6 +161,14 @@ asked for. A forever order **requires** a trigger price — that is what the
 > Probed 2026-09-08 — the first works, the second answers **404**. This adapter
 > uses the first, and the 404 body is captured in the corpus because it is a
 > fifth error shape and not Dhan's own.
+
+> **Dhan support states this endpoint "has been removed from the current API
+> offering" (2026-09-08).** It has not been: the call above answered `200` from
+> the live account at 10:41 that morning, the page is still served under "you
+> are on the latest version" with no deprecation notice, and `dhanhq` 2.2.0
+> still ships `get_forever()`. The measurement wins, as everywhere else here —
+> but pin an exact version, and treat this as the one surface someone at the
+> venue already believes is gone.
 
 The behaviours worth knowing before you trust any of this — including the
 three places Dhan's documentation is wrong in ways that silently break an

@@ -10,6 +10,7 @@ Three sources, in descending order of authority:
 | **live** — a call to `api.dhan.co` on the real account | what production does |
 | **sandbox** — a call to `sandbox.dhan.co` | what the sandbox does, which is *usually* what production does — see [The sandbox is not production](#the-sandbox-is-not-production) |
 | **documented** — the published spec | what Dhan intends, which the first two have contradicted |
+| **support** — a written answer from DhanHQ support | what a Dhan employee believes, which the three above have contradicted — see [What support says](#what-support-says-and-where-it-is-wrong) |
 
 The bodies behind these claims are in `tests/dhan/fixtures/envelope/`, one
 directory per source, and the test suite asserts every one declares which.
@@ -227,7 +228,7 @@ forever. Note the sandbox does **not** reproduce it — see below.
 | Field | Where | Status |
 | --- | --- | --- |
 | `availabelBalance` | `GET /v2/fundlimit` | **Real.** Live-captured. Reading the correct spelling returns `None`, which renders as a broke account. |
-| `totalQuatity` | `GET /v2/super/orders` → `legDetails[]` | **Unverified.** Docs only. Neither account has placed a super order, and `dhanhq` never names the field. Given `availabelBalance`, neither spelling can be assumed — `super_orders.LEG_QUANTITY_KEYS` reads both plus `remainingQuantity`. |
+| `totalQuatity` | `GET /v2/super/orders` → `legDetails[]` | **Unverified.** Docs only. Neither account has placed a super order, and `dhanhq` never names the field. Given `availabelBalance`, neither spelling can be assumed — `super_orders.LEG_QUANTITY_KEYS` reads both plus `remainingQuantity`. Put to Dhan support 2026-09-08, whose answer described what the endpoint returns when no super order exists rather than how the field is spelled — so it stays unverified. |
 | `orderType` | `GET /v2/forever/orders` | **Lies.** Carries `SINGLE`/`OCO` — the order *flag* — not the `LIMIT`/`MARKET` it was sent as. |
 | `legName` | forever vs super orders | **Means different things.** On a super order: `ENTRY_LEG`/`TARGET_LEG`/`STOP_LOSS_LEG`. On a forever order: `TARGET_LEG` is a SINGLE and an OCO's first leg, `STOP_LOSS_LEG` its second, and there is no `ENTRY_LEG`. |
 
@@ -323,6 +324,69 @@ indefinitely. So the sandbox cannot exercise the fill path at all: no
 data, and `trade_book_row` and `position_row` remain documentation.
 
 Sandbox tokens last 30 days. Keep them in `.env`, which is gitignored.
+
+---
+
+## What support says, and where it is wrong
+
+**DhanHQ support, 2026-09-08.** A written answer to a list of the questions in
+this file. It is recorded because a venue's own account of its API is worth
+having — and ranked last because of the first item below.
+
+### The Forever Order API has not been removed
+
+> "The Forever Order API has been removed from the current API offering. We
+> request you to refer to the latest Trading API documentation."
+
+It has not been, on the evidence of that same documentation:
+
+- `GET /v2/forever/orders` answered `200` with a bare array from the **live**
+  account at **2026-09-08T10:41:29+05:30** —
+  `tests/dhan/fixtures/envelope/captured/forever_orders.json`.
+- <https://dhanhq.co/docs/v2/forever/> is served under "You are on the latest
+  version of DhanHQ API", sits in the Trading APIs navigation between Super
+  Order and Portfolio, and documents Create, Modify, Delete, All and
+  Conditional Trigger. There is no deprecation notice anywhere on it.
+- `dhanhq` 2.2.0 still ships `get_forever()`.
+
+So `submit_forever_order` stays. But someone at the venue believing an
+endpoint is gone is a fact about its future even when it is wrong about its
+present: **pin an exact version, and put nothing load-bearing on forever
+orders.**
+
+### What it confirms
+
+- **Empty is a legitimate answer.** "A 200 OK response indicates that the API
+  request was successfully processed. Where no corresponding order/trade
+  information is available, the API may return a null/empty response rather
+  than an error." That is the intent behind the section of the same name
+  above, which was derived from bodies rather than from being told.
+- **90 days is the intraday chart span.** Already measured — `DH-905` states
+  it in its own `errorMessage`, which is how it got into this file.
+- **Invalid IP** on order placement is the order-source address not matching
+  the whitelisted one.
+
+### What it leaves open
+
+- **`totalQuatity`** was asked directly; the answer described the empty-state
+  response instead. Still unverified.
+- **Empty values in the documented request body.** Support calls the missing
+  commas and empty values in the samples "documentation-formatting" with "no
+  impact on API functionality". The documented body is nevertheless refused —
+  see the first section of this file.
+
+### Static IP is regulatory, and the seven days cannot be waived
+
+> "For API-based order placement, a static IP address must be whitelisted as
+> per the applicable regulatory requirements... the seven-day IP modification
+> period is a regulatory requirement and is not a broker-specific policy. It
+> cannot be overridden, manually reset, or waived."
+
+This is the useful part of the exchange. Everything in **Still unverified**
+below needs a live account, a live account needs a whitelisted static address,
+and changing that address costs a week that no one can shorten. The largest
+untested surface in this package is gated on a regulatory waiting period, not
+on effort.
 
 ---
 
