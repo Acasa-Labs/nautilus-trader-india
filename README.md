@@ -42,6 +42,23 @@ fork.
 
 ---
 
+## Install
+
+Python 3.12–3.14.
+
+```bash
+pip install nautilus-trader-india
+```
+
+`nautilus-trader` comes along as a dependency. This package is **not a fork**:
+it installs alongside upstream and registers through the ordinary factory
+hooks, so `pip install -U nautilus-trader` keeps working.
+
+The pin the table above asks for is `pip install "nautilus-trader-india==X.Y.Z"`.
+
+Building from source, running the suite, and what to check on a first run:
+[`docs/getting-started.md`](docs/getting-started.md).
+
 ## Status
 
 | Component | State |
