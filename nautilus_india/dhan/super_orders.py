@@ -172,23 +172,28 @@ def modify_payload(
     leg = _checked(leg_name, _LEG_NAMES, "legName")
     payload: dict = {"dhanClientId": client_id, "orderId": str(order_id), "legName": leg}
 
+    # Nothing is ever sent as "" -- see `orders.place_payload` for the
+    # measurement. A value that does not apply is left out.
     if leg == LEG_ENTRY:
         # The entry leg modifies the WHOLE super order, so it states all of it.
-        payload.update(
-            orderType=order_type,
-            quantity=str(quantity_units),
-            price=str(price),
-            targetPrice=target_price,
-            stopLossPrice=stop_loss_price,
-            trailingJump=trailing_jump,
-        )
+        for key, value in (("orderType", order_type),
+                           ("quantity", quantity_units),
+                           ("price", price),
+                           ("targetPrice", target_price),
+                           ("stopLossPrice", stop_loss_price),
+                           ("trailingJump", trailing_jump)):
+            if value not in (None, ""):
+                payload[key] = str(value)
     elif leg == LEG_TARGET:
-        payload["targetPrice"] = target_price
+        if target_price not in (None, ""):
+            payload["targetPrice"] = str(target_price)
     else:
-        payload["stopLossPrice"] = stop_loss_price
+        if stop_loss_price not in (None, ""):
+            payload["stopLossPrice"] = str(stop_loss_price)
         # Omitted or zero CANCELS the trail, and no value means "leave it
-        # alone" -- so the caller's intent is always spelled out.
-        payload["trailingJump"] = trailing_jump if trailing_jump is not None else "0"
+        # alone" -- so the caller's intent is always spelled out, as "0" when
+        # there is to be no trail.
+        payload["trailingJump"] = str(trailing_jump) if trailing_jump else "0"
     return payload
 
 

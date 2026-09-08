@@ -341,26 +341,33 @@ def modify_payload(
     order_type: str,
     leg_name: str = "",
 ) -> dict:
-    """The body of PUT /v2/orders/{order-id}, field for field with Dhan's own.
+    """The body of PUT /v2/orders/{order-id}.
 
     A modify REPLACES the order's terms rather than patching them, so every
-    field Dhan names is sent -- an omitted one is not "leave it alone", it is
-    a term the venue decides for itself.
+    field that APPLIES is stated -- an omitted one that applies is not "leave
+    it alone", it is a term the venue decides for itself.
 
-    `legName` names which leg of a bracket or cover order is being changed.
-    Dhan has no other handle on a leg, and it is empty for an ordinary order.
+    A field that does NOT apply is omitted rather than emptied, for the same
+    measured reason as `place_payload`: sent as `""` the modify is refused
+    with DH-905 naming nothing. Verified against the sandbox on 2026-09-08 by
+    sending both forms at the same order.
+
+    `legName` names which leg of a bracket or cover order is being changed;
+    it is absent for an ordinary order.
     """
-    return {
+    payload = {
         "dhanClientId": client_id,
         "orderId": str(order_id),
         "orderType": order_type,
-        "legName": _checked(leg_name, LEG_NAMES, "legName") if leg_name else "",
         "quantity": str(quantity_units),
         "price": str(price),
-        "disclosedQuantity": "",
-        "triggerPrice": str(trigger_price),
         "validity": validity,
     }
+    if leg_name:
+        payload["legName"] = _checked(leg_name, LEG_NAMES, "legName")
+    if trigger_price:
+        payload["triggerPrice"] = str(trigger_price)
+    return payload
 
 
 # -- reading Dhan's answers back ---------------------------------------------
@@ -383,6 +390,12 @@ _ZERO_DATE_PREFIX = "0001-01-01"
 
 # Dhan's seven documented statuses. `CLOSED` appears on super orders, which
 # this adapter does not place.
+# The statuses on which `omsErrorDescription` is a reason rather than a note.
+# MEASURED: on a healthy resting order the field reads "CONFIRMED", which is
+# not an error and not a reason -- reported as `cancel_reason` it says a
+# working order was cancelled because it was confirmed.
+_DEAD_STATUSES = frozenset({"REJECTED", "CANCELLED", "EXPIRED"})
+
 ORDER_STATUS = {
     "TRANSIT": OrderStatus.SUBMITTED,
     "PENDING": OrderStatus.ACCEPTED,
@@ -505,9 +518,14 @@ def order_status_report(
             TriggerType.DEFAULT if row.get("triggerPrice") else TriggerType.NO_TRIGGER
         ),
         avg_px=Decimal(str(average)) if average else None,
-        # The only place Dhan says why a row was refused.
-        cancel_reason=(str(row["omsErrorDescription"])
-                       if row.get("omsErrorDescription") else None),
+        # The only place Dhan says why a row was refused -- but ONLY once the
+        # row is actually dead. See `_DEAD_STATUSES`.
+        cancel_reason=(
+            str(row["omsErrorDescription"])
+            if row.get("omsErrorDescription")
+            and str(row.get("orderStatus")) in _DEAD_STATUSES
+            else None
+        ),
         report_id=report_id,
         ts_accepted=ist_to_ns(row.get("createTime")),
         ts_last=ist_to_ns(row.get("updateTime")) or ist_to_ns(row.get("createTime")),

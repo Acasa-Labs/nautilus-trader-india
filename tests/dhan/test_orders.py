@@ -221,15 +221,16 @@ def test_a_modify_payload_names_the_order_and_the_new_terms():
     assert payload["orderType"] == "LIMIT"
 
 
-def test_an_ordinary_modify_sends_an_empty_leg_name():
-    """`legName` applies to BO and CO only, but the field is Dhan's and a
-    modify replaces the order's terms -- so it is sent empty rather than
-    omitted, which is a payload Dhan does not recognise."""
+def test_an_ordinary_modify_omits_the_leg_name():
+    """`legName` applies to BO and CO only. Sent empty the whole modify is
+    refused -- measured against the sandbox, which rejected exactly this
+    payload and accepted the same one without the empty keys."""
     payload = orders.modify_payload(
         order_id="1", client_id="C", quantity_units=65, price="1.00",
         trigger_price="", validity="DAY", order_type="LIMIT",
     )
-    assert payload["legName"] == ""
+    assert "legName" not in payload
+    assert "triggerPrice" not in payload
 
 
 def test_nothing_in_the_payload_is_a_float(nifty_option):
@@ -604,13 +605,14 @@ def test_an_unknown_product_type_is_refused(nifty_option):
         )
 
 
-def test_the_modify_payload_matches_dhan_s_documented_request(nifty_option):
+def test_the_modify_payload_sends_no_field_dhan_does_not_document(nifty_option):
     documented = set(corpus.body("order_modification_request"))
     payload = orders.modify_payload(
         order_id="1", client_id="C", quantity_units=65, price="1.00",
-        trigger_price="", validity="DAY", order_type="LIMIT",
+        trigger_price="2.00", validity="DAY", order_type="LIMIT",
+        leg_name="TARGET_LEG",
     )
-    assert set(payload) == documented
+    assert set(payload) <= documented
 
 
 def test_a_modify_can_name_the_leg_it_is_changing():
@@ -677,3 +679,75 @@ def test_dhan_s_zero_date_sentinel_is_unset_not_year_one(sentinel):
 def test_a_real_timestamp_still_parses():
     """The guard must not swallow ordinary values."""
     assert orders.ist_to_ns("2026-09-08 06:12:15") > 0
+
+
+def test_a_working_order_reports_no_cancel_reason(nifty_option):
+    """MEASURED. `omsErrorDescription` is not always an error. On a healthy
+    resting order in Dhan's sandbox it reads "CONFIRMED", and this converter
+    put it straight into `cancel_reason` -- so a working order reported the
+    reason it was cancelled as "CONFIRMED", which is neither true nor a
+    reason.
+
+    The field is only meaningful once the order is actually dead.
+    """
+    report = orders.order_status_report(
+        _order_row(quantity=65, orderStatus="PENDING",
+                   omsErrorDescription="CONFIRMED"),
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert report.cancel_reason is None
+
+
+def test_a_rejected_order_still_carries_its_reason(nifty_option):
+    """The guard must not swallow the case the field exists for."""
+    report = orders.order_status_report(
+        _order_row(quantity=65, orderStatus="REJECTED",
+                   omsErrorDescription="RMS:Order Price needs to be Circuit Limits"),
+        nifty_option, ACCOUNT, UUID4(), 0,
+    )
+    assert "Circuit Limits" in report.cancel_reason
+
+
+# -- the invariant that would have caught this once, instead of four times ----
+
+
+def test_no_payload_builder_ever_sends_an_empty_string(nifty_option):
+    """MEASURED, and the same defect four times over.
+
+    Dhan refuses a request carrying `""` for a field that does not apply --
+    DH-905, naming nothing. It is refused on POST /v2/orders and on
+    PUT /v2/orders/{id} alike, and both were sent that way because Dhan's own
+    documented samples show empty strings.
+
+    Fixing the placement builder and leaving the others is exactly what
+    happened, and the modify was then rejected by the live sandbox. So this is
+    an invariant over ALL of them rather than a case per builder: a new
+    payload field that does not apply must be omitted, and this test fails the
+    moment one is emptied instead.
+    """
+    from nautilus_india import dhan as _  # noqa: F401
+    from nautilus_india.dhan import forever_orders, super_orders
+
+    payloads = {
+        "place": _payload(nifty_option),
+        "place_market": _payload(nifty_option, _market_order(nifty_option)),
+        "modify": orders.modify_payload(
+            order_id="1", client_id="C", quantity_units=65, price="1.00",
+            trigger_price="", validity="DAY", order_type="LIMIT"),
+        "modify_with_leg": orders.modify_payload(
+            order_id="1", client_id="C", quantity_units=65, price="1.00",
+            trigger_price="2.00", validity="DAY", order_type="LIMIT",
+            leg_name="TARGET_LEG"),
+        "super_modify_target": super_orders.modify_payload(
+            order_id="1", client_id="C", leg_name="TARGET_LEG", target_price="1"),
+        "super_modify_stop": super_orders.modify_payload(
+            order_id="1", client_id="C", leg_name="STOP_LOSS_LEG",
+            stop_loss_price="1", trailing_jump="2"),
+        "forever_modify": forever_orders.modify_payload(
+            order_id="1", client_id="C", order_flag="SINGLE", order_type="LIMIT",
+            leg_name="TARGET_LEG", quantity_units=1, price="1",
+            disclosed_units=0, trigger_price="1", validity="DAY"),
+    }
+    empty = {name: [k for k, v in body.items() if v == ""]
+             for name, body in payloads.items()}
+    assert not any(empty.values()), f"empty strings on the wire: {empty}"

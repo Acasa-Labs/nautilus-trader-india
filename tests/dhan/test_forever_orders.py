@@ -44,10 +44,16 @@ def _payload(instrument, **kwargs):
 # -- placing -----------------------------------------------------------------
 
 
-def test_the_payload_matches_dhan_s_documented_request_field_for_field(nifty_option):
+def test_the_payload_sends_no_field_dhan_does_not_document(nifty_option):
+    """Subset rather than equality: a field that does not apply is OMITTED,
+    because Dhan refuses an empty string -- see test_orders.py's invariant."""
     documented = set(corpus.body("forever_order_request"))
-    assert set(_payload(nifty_option, second_leg=_stop_limit(
-        nifty_option, "1420.00", "1419.00", "O-2"))) == documented
+    full = _payload(nifty_option,
+                    second_leg=_stop_limit(nifty_option, "1420.00", "1419.00", "O-2"))
+    assert set(full) <= documented
+    # An OCO states everything the documented sample does bar the optional
+    # disclosed quantity.
+    assert documented - set(full) == {"disclosedQuantity"}
 
 
 def test_a_single_forever_order_carries_one_price_and_one_trigger(nifty_option):
@@ -57,13 +63,13 @@ def test_a_single_forever_order_carries_one_price_and_one_trigger(nifty_option):
     assert payload["triggerPrice"] == "1427.00"
 
 
-def test_a_single_order_leaves_the_oco_fields_empty(nifty_option):
+def test_a_single_order_omits_the_oco_fields_entirely(nifty_option):
     """`price1`, `triggerPrice1` and `quantity1` are the OCO's second leg.
-    Filling them on a SINGLE would ask for an order that was not requested."""
+    Filling them on a SINGLE would ask for an order that was not requested --
+    and emptying them is refused outright, which is why they are absent."""
     payload = _payload(nifty_option)
-    assert payload["price1"] == ""
-    assert payload["triggerPrice1"] == ""
-    assert payload["quantity1"] == ""
+    for key in ("price1", "triggerPrice1", "quantity1"):
+        assert key not in payload
 
 
 def test_a_second_leg_makes_it_an_oco(nifty_option):

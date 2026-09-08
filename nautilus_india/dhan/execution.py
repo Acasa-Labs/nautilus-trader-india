@@ -91,7 +91,12 @@ from nautilus_india.dhan.constants import (
     SUPER_ORDERS_PATH,
     TRADES_PATH,
 )
-from nautilus_india.dhan.errors import Ambiguous, DhanError, IPNotWhitelisted
+from nautilus_india.dhan.errors import (
+    Ambiguous,
+    DhanApiError,
+    DhanError,
+    IPNotWhitelisted,
+)
 from nautilus_india.dhan.http import DhanHttpClient
 from nautilus_india.dhan.orders import (
     MARKET_ORDER_NOTE,
@@ -106,6 +111,16 @@ from nautilus_india.dhan.orders import (
     validity_for,
 )
 from nautilus_india.dhan.providers import DhanInstrumentProvider
+
+# What Dhan says when the order simply is not there. Message-matched, because
+# its code (DH-906) is shared with an invalid token and with a transit-state
+# refusal, and those must not be read as "no such order".
+_NO_SUCH_ORDER = ("incorrect request for order",)
+
+
+def _is_no_such_order(exc: DhanApiError) -> bool:
+    reason = str(getattr(exc, "reason", exc)).lower()
+    return any(phrase in reason for phrase in _NO_SUCH_ORDER)
 
 
 class DhanExecutionClient(LiveExecutionClient):
@@ -515,7 +530,22 @@ class DhanExecutionClient(LiveExecutionClient):
             # Answering with the day's whole order book would be a different
             # question from the one asked.
             return None
-        body = await self._http.get(path)
+        try:
+            body = await self._http.get(path)
+        except DhanApiError as exc:
+            # "No such order" is a definitive ANSWER, not a failed read, and
+            # the two lookups phrase it incompatibly: /v2/orders/{id} answers
+            # 200 with [], while /v2/orders/external/{id} answers 404 DH-906.
+            # Left to raise, a reconciliation asking by client order id would
+            # crash on an entirely normal condition.
+            #
+            # Matched on the MESSAGE, not the code. DH-906 also means "Invalid
+            # Token" and "Order is in Transit state"; swallowing an auth
+            # failure as an absent order would render a dead session as an
+            # empty order book.
+            if _is_no_such_order(exc):
+                return None
+            raise
         # Asked by client order id, we already know whose order this is --
         # Dhan echoes a DERIVED correlationId, which would otherwise map back
         # to nothing for an order this session did not itself place.

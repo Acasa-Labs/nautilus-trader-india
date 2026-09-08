@@ -1124,3 +1124,43 @@ async def test_a_correlation_id_that_is_not_ours_maps_to_nothing(
     client = await _client(handler, nifty_option)
     reports = await client.generate_order_status_reports(_orders_command())
     assert reports[0].client_order_id is None
+
+
+async def test_an_order_not_found_by_correlation_id_is_none_not_an_exception(
+    nifty_option, live_env
+):
+    """MEASURED. `GET /v2/orders/{id}` answers `200 []` for an id that cannot
+    exist, and this client turns that into None. `GET /v2/orders/external/{id}`
+    answers `404 DH-906 "Incorrect request for order and cannot be processed"`
+    for the same question -- so the two lookups disagreed, and reconciliation
+    asking by client order id would raise on an entirely normal condition.
+
+    Matched on the MESSAGE, not the code: DH-906 also means "Invalid Token"
+    and "Order is in Transit state", and swallowing an auth failure as "no
+    such order" would report an account-wide outage as an empty book.
+    """
+    async def handler(request):
+        return httpx.Response(404, json={
+            "errorType": "Order_Error", "errorCode": "DH-906",
+            "errorMessage": "Incorrect request for order and cannot be processed"})
+
+    client = await _client(handler, nifty_option)
+    report = await client.generate_order_status_report(GenerateOrderStatusReport(
+        instrument_id=nifty_option.id, client_order_id=ClientOrderId("nti-1"),
+        venue_order_id=None, command_id=UUID4(), ts_init=0))
+    assert report is None
+
+
+async def test_an_auth_failure_on_that_lookup_still_raises(nifty_option, live_env):
+    """The same DH-906. An invalid token is not an absent order, and reporting
+    it as one would render a dead session as an empty order book."""
+    async def handler(request):
+        return httpx.Response(401, json={
+            "errorType": "Order_Error", "errorCode": "DH-906",
+            "errorMessage": "Invalid Token"})
+
+    client = await _client(handler, nifty_option)
+    with pytest.raises(DhanApiError, match="Invalid Token"):
+        await client.generate_order_status_report(GenerateOrderStatusReport(
+            instrument_id=nifty_option.id, client_order_id=ClientOrderId("nti-1"),
+            venue_order_id=None, command_id=UUID4(), ts_init=0))

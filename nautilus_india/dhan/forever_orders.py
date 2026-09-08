@@ -122,7 +122,7 @@ def place_payload(
     """
     dhan_type = order_type_for_forever(order.order_type)
     trigger = _trigger_of(order)
-    return {
+    payload = {
         "dhanClientId": client_id,
         "correlationId": correlation_id(order.client_order_id),
         "orderFlag": ORDER_FLAG_OCO if second_leg is not None else ORDER_FLAG_SINGLE,
@@ -135,23 +135,20 @@ def place_payload(
         "validity": validity_for(order.time_in_force),
         "securityId": str(security_id),
         "quantity": str(units_for(instrument, order.quantity)),
-        "disclosedQuantity": (
-            str(units_for(instrument, order.display_qty))
-            if getattr(order, "display_qty", None)
-            else ""
-        ),
         "price": _price_string(order.price if order.has_price else None),
         "triggerPrice": _price_string(trigger),
-        # The OCO's second leg. Empty on a SINGLE: filling these would ask for
-        # an order that was not requested.
-        "price1": _price_string(second_leg.price if second_leg is not None else None),
-        "triggerPrice1": _price_string(
-            _trigger_of(second_leg) if second_leg is not None else None
-        ),
-        "quantity1": (
-            str(units_for(instrument, second_leg.quantity)) if second_leg is not None else ""
-        ),
     }
+    # Nothing is ever sent as "" -- see `orders.place_payload`. A field that
+    # does not apply is left out, including the OCO's whole second leg:
+    # filling those on a SINGLE would ask for an order nobody requested.
+    display = getattr(order, "display_qty", None)
+    if display:
+        payload["disclosedQuantity"] = str(units_for(instrument, display))
+    if second_leg is not None:
+        payload["price1"] = _price_string(second_leg.price)
+        payload["triggerPrice1"] = _price_string(_trigger_of(second_leg))
+        payload["quantity1"] = str(units_for(instrument, second_leg.quantity))
+    return payload
 
 
 def modify_payload(
@@ -167,7 +164,7 @@ def modify_payload(
     validity: str,
 ) -> dict:
     """The body of PUT /v2/forever/orders/{order-id}."""
-    return {
+    payload = {
         "dhanClientId": client_id,
         "orderId": str(order_id),
         "orderFlag": _checked(order_flag, ORDER_FLAGS, "orderFlag"),
@@ -176,10 +173,12 @@ def modify_payload(
         "legName": _checked(leg_name, FOREVER_LEG_NAMES, "legName"),
         "quantity": quantity_units,
         "price": str(price),
-        "disclosedQuantity": disclosed_units,
         "triggerPrice": str(trigger_price),
         "validity": validity,
     }
+    if disclosed_units:
+        payload["disclosedQuantity"] = disclosed_units
+    return payload
 
 
 def cancel_path(order_id: str) -> str:

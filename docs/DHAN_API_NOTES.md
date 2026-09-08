@@ -88,6 +88,49 @@ from an id we could have sent. `client_order_id_for` therefore matches only
 against ids this session knows about, and answers `None` otherwise — guessing
 would attach a stranger's fill to our position.
 
+### `omsErrorDescription` is not always an error
+
+**Sandbox, 2026-09-08.** On a healthy resting order the field reads
+`"CONFIRMED"`. Reported as a Nautilus `cancel_reason` — which is what this
+adapter did — a working order says it was cancelled because it was confirmed.
+The field is only meaningful once the order is `REJECTED`, `CANCELLED` or
+`EXPIRED`.
+
+### `TRANSIT` is a state with its own rules
+
+**Sandbox, 2026-09-08.** Between placement and `PENDING` an order sits in
+`TRANSIT`, and it is not simply "nearly accepted":
+
+- **A cancel is refused** — `400 DH-906 "Order is in Transit state"`.
+- **A modify is accepted** — `200`, same as any other. The asymmetry is not
+  documented.
+- **`GET /v2/orders/external/{correlationId}` cannot find it** — see below.
+
+### `DH-906` is not diagnostic either
+
+Like `DH-905`. Observed for three unrelated things:
+
+| Message | Means |
+| --- | --- |
+| `Invalid Token` | the session is dead |
+| `Incorrect request for order and cannot be processed` | no such order |
+| `Order is in Transit state` | too early to cancel |
+
+The first and second need opposite handling, so this adapter matches on the
+**message** when it has to tell them apart — reading the code alone would let
+an expired token be reported as an empty order book.
+
+### `GET /v2/orders/external/{id}` answers "not found" differently
+
+**Sandbox, 2026-09-08.** For an id it has no order for — including one placed
+seconds earlier and still in `TRANSIT` — it answers
+`404 DH-906 "Incorrect request for order and cannot be processed"`.
+
+`GET /v2/orders/{id}` answers the same question with `200 []`. So the two
+lookups phrase "no such order" incompatibly, and a reconciliation asking by
+client order id would raise where asking by venue id returns nothing. This
+adapter maps both to `None`.
+
 ### `0001-01-01` is a sentinel, not a date
 
 **Sandbox, 2026-09-08.** An order that never reached the exchange comes back
@@ -216,10 +259,18 @@ Measured differences, 2026-09-08:
 | `/v2/profile` `activeSegment` | `"E, D, C, M, "` | `"Equity, Derivative, Currency, Commodity"` |
 | `/v2/profile` fields | includes `mtf`, `dataValidity` | absent |
 | `availabelBalance` | the real balance | `1000000.0` |
+| `POST /v2/marketfeed/ltp` | 200 with quotes | **404 — data APIs absent** |
+| order matching | a real exchange | **none — orders rest at `PENDING` and never fill** |
 
 The `/v2/holdings` row is the cautionary one: **testing only against the
 sandbox would not have found production's 500.** Fixtures captured from the
 sandbox live in their own directory for this reason.
+
+**There is no matching engine.** An order rests at `PENDING` and is never
+filled, whatever its price — a limit at the upper circuit band sat unfilled
+indefinitely. So the sandbox cannot exercise the fill path at all: no
+`FillReport` and no `PositionStatusReport` has ever been produced from real
+data, and `trade_book_row` and `position_row` remain documentation.
 
 Sandbox tokens last 30 days. Keep them in `.env`, which is gitignored.
 
@@ -234,6 +285,7 @@ measurement should be pinned:
   account has never placed one. Every super-order fixture is documentation.
 - Any **forever order** response body beyond the empty list.
 - A **filled** order, and therefore any real `GET /v2/trades` row, any
-  position row, and the whole fill-report path.
+  position row, and the whole fill-report path. The sandbox cannot supply
+  this — it has no matching engine.
 - The **order-update WebSocket** (`wss://api-order-update.dhan.co`).
 - Whether `POST /v2/orders/slicing` splits as documented.
