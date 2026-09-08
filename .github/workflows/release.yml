@@ -1,0 +1,56 @@
+name: release
+
+# Publishing is one-way: PyPI never lets a version number be reused, and a
+# yanked release still occupies its number for ever. So the default target of
+# a manual run is TestPyPI, and only a published GitHub release goes to PyPI.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to publish a dry run
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install build twine
+      - run: python -m build
+      # --strict fails on a README that PyPI would refuse to render. Without
+      # it that is discovered after the upload, by which time the version
+      # number is spent and the fix has to ship as a new one.
+      - run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment is where a required reviewer can be attached, making the
+    # upload a decision rather than a consequence of merging.
+    environment: ${{ inputs.target == 'testpypi' && 'testpypi' || 'pypi' }}
+    permissions:
+      # Mandatory for trusted publishing. PyPI exchanges this short-lived OIDC
+      # identity for an API token good for 15 minutes, so no long-lived token
+      # is stored in the repository at all -- nothing to leak, nothing to
+      # rotate, and nothing for push protection to have to catch.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A release event carries no inputs, so it falls through to PyPI.
+          repository-url: ${{ inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
