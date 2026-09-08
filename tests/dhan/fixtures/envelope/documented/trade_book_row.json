@@ -1,0 +1,28 @@
+{
+  "endpoint": "GET /v2/trades",
+  "http_status": 200,
+  "provenance": "documented-never-observed",
+  "source": "https://dhanhq.co/docs/v2/orders/ -- Trade Book response",
+  "warning": "NEVER OBSERVED. This account has never traded, so every array endpoint returns `[]` and no row of this shape has ever arrived here. Field names are Dhan's, read from the v2 docs on 2026-09-08; the values are Dhan's own sample values. Re-capture the first time a real order exists, and move the file up a tier when you do.",
+  "why_it_matters": "The fill report's source. `tradedQuantity` is in UNITS, so it divides by the lot to become a Nautilus quantity, and `exchangeTradeId` is the only stable per-fill id Dhan gives.",
+  "body": {
+    "dhanClientId": "1000000009",
+    "orderId": "112111182045",
+    "exchangeOrderId": "15112111182045",
+    "exchangeTradeId": "15112111182045",
+    "transactionType": "BUY",
+    "exchangeSegment": "NSE_EQ",
+    "productType": "INTRADAY",
+    "orderType": "LIMIT",
+    "tradingSymbol": "TCS",
+    "securityId": "11536",
+    "tradedQuantity": 40,
+    "tradedPrice": 3345.8,
+    "createTime": "2021-03-10 11:20:06",
+    "updateTime": "2021-11-25 17:35:12",
+    "exchangeTime": "2021-11-25 17:35:12",
+    "drvExpiryDate": null,
+    "drvOptionType": null,
+    "drvStrikePrice": 0.0
+  }
+}

@@ -68,3 +68,38 @@ REQUEST_DISCONNECT = 12
 # The feed accepts at most this many instruments per subscription packet, and
 # the packet is padded to it regardless of how many are sent.
 SUBSCRIBE_GROUP_SIZE = 100
+
+# -- the order path ----------------------------------------------------------
+# Dhan's REST vocabulary. Spelled once, here, so no caller has to remember
+# which of these are Dhan's words and which are ours.
+
+# Name -> feed segment code. The REST API answers with the NAME ("NSE_FNO")
+# and the provider's reverse map is keyed on the CODE, so a report cannot
+# resolve an instrument without this direction too.
+SEGMENT_CODES = {name: code for code, name in SEGMENT_NAMES.items()}
+
+SIDE_BUY = "BUY"
+SIDE_SELL = "SELL"
+
+# LIMIT is the only order type this adapter sends. See `orders.py`: Dhan
+# converts an API MARKET order into a limit order with market-protection
+# pricing, so a "market" order is a limit order at a price the caller did not
+# choose.
+ORDER_TYPE_LIMIT = "LIMIT"
+
+# CNC and MTF are refused by the F&O segment; INTRADAY and MARGIN are the two
+# that work there. INTRADAY is the default because it is the only one whose
+# margin this package models.
+PRODUCT_INTRADAY = "INTRADAY"
+PRODUCT_MARGIN = "MARGIN"
+PRODUCT_CNC = "CNC"
+
+VALIDITY_DAY = "DAY"
+VALIDITY_IOC = "IOC"
+
+# `correlationId` is the ONLY field that round-trips a caller's own id: it
+# comes back on GET /v2/orders and on the order-update socket, so it is where
+# the ClientOrderId has to live. Dhan caps it at 30 characters. A default
+# Nautilus id (`O-19700101-000000-001-000-1`) is 27 and fits with three to
+# spare; a UUID one is 36 and does not.
+CORRELATION_ID_MAX_LEN = 30

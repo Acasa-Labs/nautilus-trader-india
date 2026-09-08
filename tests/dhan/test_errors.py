@@ -110,6 +110,19 @@ def test_an_unknown_instrument_is_an_empty_success_not_a_failure(name):
     classify(corpus.body(name))  # must not raise
 
 
+@pytest.mark.parametrize("name", ["order_book_row", "trade_book_row", "position_row"])
+def test_a_real_row_inside_an_array_is_not_an_error(name):
+    """The one gap the corpus could not close: every captured array is empty,
+    because this account has never traded. `classify` tells an error element
+    from a data element by the field name -- Dhan calls an order's state
+    `orderStatus` and a position's `positionType`, never plain `status` --
+    and these three documented rows are what checks that claim until a real
+    non-empty list exists."""
+    row = corpus.body(name)
+    assert "status" not in row
+    assert classify([row]) == [row]
+
+
 def test_a_documented_order_acknowledgement_is_a_success():
     """THE REGRESSION. This is the body a live order returns, and the old
     `classify` raised OrderRejected('unspecified failure') for it: two orders

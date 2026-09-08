@@ -1,0 +1,12 @@
+{
+  "endpoint": "DELETE /v2/orders/{order-id}",
+  "http_status": 202,
+  "provenance": "documented-never-observed",
+  "source": "https://dhanhq.co/docs/v2/orders/ -- Order Cancellation",
+  "warning": "NEVER OBSERVED. This account has never traded, so every array endpoint returns `[]` and no row of this shape has ever arrived here. Field names are Dhan's, read from the v2 docs on 2026-09-08; the values are Dhan's own sample values. Re-capture the first time a real order exists, and move the file up a tier when you do.",
+  "why_it_matters": "A cancel answers with the same two-field acknowledgement a placement does. The docs say 202 Accepted; nothing keys on it.",
+  "body": {
+    "orderId": "112111182045",
+    "orderStatus": "CANCELLED"
+  }
+}
