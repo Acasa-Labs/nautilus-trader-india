@@ -1,11 +1,12 @@
 # nautilus-trader-india
 
-A NautilusTrader adapter for **Dhan** — NSE, BSE and MCX. A **Zerodha Kite**
-adapter is the point of the shared core and is *not started*; if that is what
-you came for, there is nothing here for you yet.
+A [NautilusTrader](https://nautilustrader.io) adapter for **Dhan** — NSE, BSE
+and MCX. A **Zerodha Kite** adapter is the point of the shared core and is
+*not started*; if that is what you came for, there is nothing here for you yet.
 
-An independent MIT package that installs alongside upstream `nautilus-trader`.
-Not a fork.
+An independent MIT package that installs alongside upstream
+[`nautilus-trader`](https://github.com/nautechsystems/nautilus_trader). Not a
+fork.
 
 ---
 
@@ -247,5 +248,6 @@ number could not be verified, the table says so.
 
 ## Licence
 
-MIT. NautilusTrader itself is LGPL-3.0; this package links against it and
-contains none of its code.
+MIT. [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) itself
+is LGPL-3.0-or-later; this package links against it and contains none of its
+code.
